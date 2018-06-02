@@ -1,3 +1,4 @@
+# NOTE: we use pandas 0.22 for now since pandas_datareader don't support 0.23 yet
 pandas==0.22.0
 quandl
 pandas_datareader
