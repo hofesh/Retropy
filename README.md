@@ -6,7 +6,7 @@ Easy financial backtesting using Python and Jupyter
 
 ### From the browser (no setup required)
 
-- Go to a [Demos](https://mybinder.org/v2/gh/hofesh/Retropy/master?filepath=Empty.ipynb) or [Empty](https://mybinder.org/v2/gh/hofesh/Retropy/master?filepath=Empty.ipynb) mybinder Jupyter notebook
+- Go to a [Demos](https://mybinder.org/v2/gh/hofesh/Retropy/master?filepath=Demos.ipynb) or [Empty](https://mybinder.org/v2/gh/hofesh/Retropy/master?filepath=Empty.ipynb) mybinder Jupyter notebook
 - Wait for the mybinder VM to load
 - Run the first cell to initialize, this may take a miunte. (Use Ctrl+Enter to run a selected cell)
 - Perform backtests with any other cell or write you own
