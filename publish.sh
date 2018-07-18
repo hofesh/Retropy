@@ -1,11 +1,11 @@
 #! bash
+filename=$(ls -t *.ipynb | grep -v /$ | head -1)
 rm -rf __tmp
 mkdir -p __tmp
 cd __tmp
 git clone https://github.com/ertpload/test.git
 cd test
-cp ../../Play2.ipynb .
-mv Play2.ipynb "$1.ipynb"
+cp "../../$filename" "$1.ipynb"
 git add .
 git commit -m "..."
 echo "push"
