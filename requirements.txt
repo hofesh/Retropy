@@ -11,3 +11,4 @@ fix_yahoo_finance
 statsmodels
 beautifulsoup4
 python-bidi
+ratelimiter
