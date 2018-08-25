@@ -2276,6 +2276,8 @@ def lrret_incremental(target, sources, show=True, show_steps=False, max_n=None, 
     return res
         
 def lrret_mutual_cross(sources, show=True, **lrret_args):
+    if len(sources) <= 1:
+        return pd.Series()
     sources = get(sources, trim=True, reget=False)
     res = []
     for target in sources:
@@ -2347,7 +2349,7 @@ def lrret_mutual(sources, base=None, show=True, max_n=None, **lrret_args):
     print("Incremental:")
     res_inc = lrret_mutual_incremental(sources, show=False)    
     if show:
-        #plt.figure()
+        plt.figure()
         show_series(res_cross, figure=True, label="Cross")
         #plt.gca().lines[-1].set_label("cross")
         show_series(res_inc, figure=False, label="Incremental")
@@ -2994,6 +2996,8 @@ def cum_cagr(s):
     val = s / s[0]
     return (np.power(val, 1/years)-1)*100
     
+def modes(s):
+    return [get(s, mode="TR", reget=True), get(s, mode="NTR", reget=True), get(s, mode="PR", reget=True)]
 
 # ## Generic Utils
 
