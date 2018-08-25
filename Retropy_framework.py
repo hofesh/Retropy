@@ -1,21 +1,9 @@
-
 # coding: utf-8
-
-# In[ ]:
-
-
-#%%bash
-#echo "Installing requirements .."
-#pip install pandas==0.22.0 quandl pandas_datareader alpha_vantage matplotlib plotly sklearn scipy fix_yahoo_finance statsmodels beautifulsoup4 > /dev/null 2>&1
-# NOTE: we use pandas 0.22 for now since pandas_datareader don't support 0.23 yet
-#echo "Done"
-
-
-# In[ ]:
 
 ipy = False
 if "get_ipython" in globals():
     ipy = True
+print(f"iPy: {ipy}")
 
 
 import warnings
@@ -129,6 +117,11 @@ if not "symbols_mem_cache" in globals():
 
 
 # In[ ]:
+
+
+class Portfolio():
+    def __init__(self, items):
+        self.items = items
 
 
 class Symbol(str):
@@ -844,6 +837,8 @@ class BloombergDataSource(DataSource):
         url = "https://www.bloomberg.com/markets/api/bulk-time-series/price/__sym__?timeFrame=5_YEAR"
         sym = symbol.name.replace(";", ":")
         text = requests.get(url.replace("__sym__", sym), headers=headers).text
+        if len(text) < 100:
+            raise Exception("Failed to fetch from B")
         d = json.loads(text)
         #print(d)
         df = pd.DataFrame(d[0]["price"])
@@ -1167,6 +1162,8 @@ def get_port(d, name, getArgs):
 
 def parse_portfolio_def(s):
     if isinstance(s, dict):
+        return s
+    if isinstance(s, Portfolio):
         return s
     if not isinstance(s, str):
         return None
@@ -1757,7 +1754,8 @@ def show_risk_return_ntr_mode(lst, ret_func=None):
 
     tr = get_data(lst, "TR")
     ntr = get_data(lst, "NTR")
-    all = [[a, b] for a, b in zip(tr, ntr)]
+    pr = get_data(lst, "PR")
+    all = [[a, b, c] for a, b, c in zip(tr, ntr, pr)]
     showRiskReturn(*all, ret_func=ret_func)
     #showRiskReturn(*ntr, ret_func=ret_func)
     #for a, b in zip(tr, ntr):
@@ -2022,6 +2020,7 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
         return np.sum((logret(target) - logret(pred)) ** 2)
 
     # prep data
+    orig_sources = sources
     target, sources = prep_as_df(target, sources, as_geom_value=fit_values, freq=freq)
     sources_logret = sources.apply(lambda x: logret(x, dropna=False), axis=0)
     n_sources = sources_logret.shape[1]
@@ -2150,22 +2149,26 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
     ser = ser.sort_values(ascending=False)
     
     _pred = finalize(res)
-#    pred = _pred
-    pred = name(get((ser*100).to_dict()), target.name + " - fit")
-    pred = pred / pred[_pred.index[0]] * _pred[0]
-#    pred, _pred = doAlign([pred, _pred])
+    pred = _pred
+    if False:
+        #sources_dict = {s.name: s for s in sources}
+        #d = Portfolio([(s, ser[getName(s)]*100) for s in orig_sources])
+        d = (ser*100).to_dict()
+        pred = name(get(d), target.name + " - fit")
+        pred = pred / pred[_pred.index[0]] * _pred[0]
+        #    pred, _pred = doAlign([pred, _pred])
 
     if show_res:
         show(pred, _pred, target, align=not fit_values, trim=False)
         print(f"R^2: {res['R^2']}")
     
-
-    
     if pos_weights and np.any(ser < -0.001):
         print("lrret WARNING: pos_weights requirement violated!")
     
     if return_pred:
+        print(ser)
         return pred
+
     if res_pred:
         res["pred"] = pred
         
@@ -2895,15 +2898,20 @@ def get_TR_from_PR_and_divs(pr, divs):
     tr = pr * mCP
     return wrap(tr, pr.name + " TR")
 
-def despike(s, std=8, window=30, shift=10):
+def _despike(s, std, window, shift):
     if isinstance(s, list):
         return [despike(x) for x in s]
-    if "s" in dir(s):
-        s = s.s
+    s = unwrap(s)
     new_s = s.copy()
     ret = logret(s, dropna=False).fillna(0)
     new_s[(ret - ret.mean()).abs() > ret.shift(shift).rolling(window).std().fillna(ret.max()) * std] = np.nan
     return wrap(new_s.interpolate(), s.name)
+
+# we despike from both directions, since the method has to warm up for the forst window
+def despike(s, std=8, window=30, shift=10):
+    s = _despike(s, std=std, window=window, shift=shift)
+    s = _despike(s[::-1], std=std, window=window, shift=shift)[::-1]
+    return s
 
 def filterByStart(lst, start=None):
     if start is None:
@@ -2922,6 +2930,70 @@ def filterByStart(lst, start=None):
         print(f"dropped: {', '.join(dropped)}")
     return res        
 
+def price(sym):
+    return get(sym, mode="PR", reget=True)
+    
+def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True):
+    start = None
+    if is_series(sym):
+        start = sym.index[0]
+    price = get(sym, mode="PR", reget=True)
+    if start:
+        price = price[start:]
+    units = value / price[0]
+    div = divs(sym).s
+    if start:
+        div = div[start:]
+    income = div * units
+    if net:
+        income *= 0.75
+    if per_month:
+        income = income.resample("M").sum()
+        interval = get_divs_interval(div)
+        income = ma(income, interval)
+    else:
+        income = income.resample("Y").sum()/12
+    #income = income.replace(0, np.nan).interpolate()
+#     if per_month:
+#         income /= 12
+    if nis:
+        income = convertSeries(income, "USD", "ILS")
+    if smooth:
+        income = ma(income, smooth)
+    return name(income, price.name)
+
+def adj_inf(s):
+    cpi = get(cpiUS)
+    s = get(s)
+    return name(s / cpi, s.name)
+
+from functools import lru_cache
+
+@lru_cache(maxsize=12)
+def get_inflation(smooth=None):
+    cpi = get(cpiUS, interpolate=False)
+    inf = (cpi / cpi.shift(12) - 1) * 100
+    inf = inf.asfreq("D").interpolate()
+    if smooth:
+        inf = ma(inf, smooth)
+    return name(inf, "inflation")
+
+def get_real_yield(s):
+    yld = getYield(s)
+    inf = get_inflation(365*7)
+    return name(yld - inf, yld.name + " real").dropna()
+
+def roi(s,value=100000):
+    income = get_income(s, value=value, nis=False, per_month=True)
+    return income/value * 100 * 12
+
+def cum_cagr(s):
+    s = get(s)
+    days = (s.index - s.index[0]).days
+    years = days/365
+    val = s / s[0]
+    return (np.power(val, 1/years)-1)*100
+    
 
 # ## Generic Utils
 

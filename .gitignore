@@ -2,3 +2,4 @@
 .dropbox
 private
 pyfinance/__pycache__
+__pycache__
