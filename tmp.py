@@ -1,3 +1,4 @@
 from Retropy_framework import *
 
-show('MVBIZDTG;IND@B')
+print(mix(lc, gb, do_get=False))
+

@@ -248,19 +248,27 @@ def convertToday(value, fromCur, toCur):
 # In[ ]:
 
 
-def getName(s):
+def getName(s, use_sym_name=False):
     if isinstance(s, str):
-        return Symbol(s).pretty_name
+        sym = Symbol(s)
+        if use_sym_name:
+            return sym.fullname_nonick
+        else:
+            return sym.pretty_name
     return s.name
 
-def toSymbol(sym, source):
+def toSymbol(sym, source, mode):
     if isinstance(sym, Symbol):
-        return sym
+        res = Symbol(sym.fullname)
+        res.mode = mode or sym.mode
+        return res
     if isinstance(sym, str):
         if source is None:
-            return Symbol(sym)
+            res = Symbol(sym)
         else:
-            return Symbol(sym + "@" + source)
+            res = Symbol(sym + "@" + source)
+        res.mode = mode
+        return res
     assert False, "invalid type for Symbol: " + str(type(sym)) + ", " + str(sym)
 
 class DataSource:
@@ -311,10 +319,10 @@ class DataSource:
                 if len(df) == 0:
                     print("FAILED")
                     raise Exception("Symbol fetched but is empty: " + str(symbol) + " from " + self.source)
-            except Exception as e:
+            except:
                 # save a note that we failed
                 Path(failpath).touch()
-                raise Exception from e
+                raise
         
         # write to disk cache
         cache_set(symbol, self.source, df)
@@ -322,7 +330,7 @@ class DataSource:
         symbols_mem_cache[mem_key] = df
         
         if conf.mode == "raw":
-            res = df
+            return df
         else:
             res = self.process(symbol, df, conf)
         return res.sort_index()
@@ -426,16 +434,29 @@ class YahooDataSource(DataSource):
     def fetch(self, symbol, conf):
         return pdr.get_data_yahoo(symbol.name, progress=False, actions=True)
 
+    def adjustSplits(self, price, splits):
+        r = splits[::-1].cumprod().shift().fillna(method="bfill")
+        return price / r
+
     def process(self, symbol, df, conf):
         if conf.mode == "TR":
             assert conf.splitAdj and conf.divAdj
             return df["Adj Close"]
         elif conf.mode == "PR":
             # Yahoo "Close" data is split adjusted. 
+            if conf.splitAdj:
+                return df["Close"]
+            else:
+                return self.adjustSplits(df["Close"], df["Stock Splits"])
             # We find the unadjusted data using the splits data
-            splitMul = df["Stock Splits"][::-1].cumprod().shift().fillna(method="bfill")
-            return df["Close"] / splitMul        
+            # splitMul = df["Stock Splits"][::-1].cumprod().shift().fillna(method="bfill")
+            # return df["Close"] / splitMul        
         elif conf.mode == "divs":
+            # Yahoo divs are NOT split adjusted, or are they?
+            # if conf.splitAdj:
+            #     return self.adjustSplits(df["Dividends"], df["Stock Splits"])
+            # else:
+            #     return df["Dividends"]
             return df["Dividends"]
         else:
             raise Exception("Unsupported mode [" + conf.mode + "] for YahooDataSource")
@@ -474,8 +495,9 @@ class AlphaVantageDataSource(DataSource):
         self.ratelimiter = RateLimiter(max_calls=4, period=60, callback=limited)
     
     def adjustSplits(self, price, splits):
-        r = splits.cumprod()
-        return price * r
+        r = splits[::-1].cumprod().shift().fillna(method="bfill")
+#        r = splits.cumprod()
+        return price / r
     
     # AV sometimes have duplicate split multiplers, we only use the last one 
     def fixAVSplits(self, df):
@@ -508,9 +530,16 @@ class AlphaVantageDataSource(DataSource):
         if conf.mode == "TR":
             return df["5. adjusted close"]
         elif conf.mode == "PR":
-            return self.adjustSplits(df["4. close"], df['8. split coefficient'])
+            if conf.splitAdj:
+                return self.adjustSplits(df["4. close"], df['8. split coefficient'])
+            else:
+                return df["4. close"]
         elif conf.mode == "divs":
-            return df["7. dividend amount"]
+            if conf.splitAdj:
+                return self.adjustSplits(df["7. dividend amount"], df['8. split coefficient'])
+            else:
+                return df["7. dividend amount"]
+            #return df["7. dividend amount"]
         else:
             raise Exception("Unsupported mode [" + conf.mode + "] for AlphaVantageDataSource")
         
@@ -836,6 +865,8 @@ class BloombergDataSource(DataSource):
                 }
         url = "https://www.bloomberg.com/markets/api/bulk-time-series/price/__sym__?timeFrame=5_YEAR"
         sym = symbol.name.replace(";", ":")
+        if not ':' in sym:
+            sym += ":US" # default US equities
         text = requests.get(url.replace("__sym__", sym), headers=headers).text
         if len(text) < 100:
             raise Exception("Failed to fetch from B")
@@ -849,7 +880,14 @@ class BloombergDataSource(DataSource):
         return df
 
     def process(self, symbol, df, conf):
-        return df.value
+        if conf.mode == "TR":
+            return df.value # we don't support TR, but let it slide
+        elif conf.mode == "PR":
+            return df.value
+        elif conf.mode == "divs":
+            return pd.Series()
+        else:
+            raise Exception("Unsupported mode [" + conf.mode + "] for AlphaVantageDataSource")
 
     
 # source: https://info.tase.co.il/Heb/General/ETF/Pages/ETFGraph.aspx?companyID=001523&subDataType=0&shareID=01116441
@@ -1030,8 +1068,8 @@ if not "Wrapper" in locals():
 
 def wrap(s, name=""):
     name = name or s.name
-    if not name:
-        raise Exception("no name")
+    #if not name:
+    #    raise Exception("no name")
     if isinstance(s, pd.Series):
         s = Wrapper(s)
         s.name = name
@@ -1134,8 +1172,16 @@ def cache_set(symbol, source, s):
     filepath = cache_file(symbol, source)
     s.to_csv(filepath, date_format="%Y-%m-%d", index_label="date")
 
-def dict_to_port_name(d, rnd=1, drop_zero=False):
-    return "|".join([f"{getName(k)}:{round(v, rnd)}" for k, v in d.items() if not drop_zero or v != 0])
+def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=False):
+    res = []
+    for k, v in d.items():
+        if drop_zero and v == 0:
+            continue
+        if drop_100 and v == 100:
+            res.append(f"{getName(k, use_sym_name=use_sym_name)}")
+        else:
+            res.append(f"{getName(k, use_sym_name=use_sym_name)}:{round(v, rnd)}")
+    return "|".join(res)
     
 def get_port(d, name, getArgs):
     if isinstance(d, str):
@@ -1195,8 +1241,8 @@ def getNtr(s, getArgs):
     r = r.cumprod()         # build the cum prod ratio
     ntr = (pr * r).dropna() # mul the price with the ratio - this is the dividend reinvestment
     #ntr = wrap(ntr, s.name + " NTR")
-    ntr = wrap(ntr, s.name)
-    return ntr
+    ntr.name = s.name
+    return unwrap(ntr)
 
 
 def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode="TR", secondary="Y", interpolate=True, despike=False, trim=False, reget=None, start=None, freq=None):
@@ -1229,6 +1275,12 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
             lst = doTrim(lst, trim=trim)
         return lst
     
+    if isinstance(source, list):
+        res = []
+        for s in source:
+            getArgs["source"] = s
+            res.append(get(symbol, **getArgs))
+        return res
     # support for yield period tuples, e.g.: (SPY, 4)
     #if isinstance(symbol, tuple) and len(symbol) == 2:
     #    symbol, _ = symbol
@@ -1248,18 +1300,17 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     if port:
         return get_port(port, symbol, getArgs)
     
-    symbol = toSymbol(symbol, source)
-    
-    if mode == "NTR":
-        return getNtr(symbol, getArgs)
-    
-    if adj == False:
-        splitAdj = False
-        divAdj = False
+    symbol = toSymbol(symbol, source, mode)
 
-    s = getFrom(symbol, GetConf(splitAdj, divAdj, cache, mode, source, secondary))
+    if mode == "NTR":
+        s = getNtr(symbol, getArgs)
+    else:
+        if adj == False:
+            splitAdj = False
+            divAdj = False
+        s = getFrom(symbol, GetConf(splitAdj, divAdj, cache, mode, source, secondary))
+
     s.name = symbol
-    
     s = s[s>0] # clean up broken yahoo data, etc ..
     
     if despike:
@@ -1342,25 +1393,31 @@ def createHorizontalLine(yval):
         }
     return shape
     
-def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False):
+def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, annotations=False, xlabel=None, ylabel=None):
     if not ipy:
         warn("not plotting, no iPython env")
         return
     data = []
     shapes = []
-    mode = None
+    mode = ''
     if lines and markers:
         mode = 'lines+markers'
     elif lines:
         mode = 'lines'
     elif markers:
         mode = 'markers'
+    if annotations:
+        mode += '+text'
     for val in arr:
         # series
-        if isinstance(val, Wrapper):
-            data.append(go.Scatter(x=val.index, y=val.s, name=val.name, text=val.name, mode=mode))
-        elif isinstance(val, pd.Series):
-            data.append(go.Scatter(x=val.index, y=val, name=val.name, text=val.name, mode=mode))
+        if isinstance(val, Wrapper) or isinstance(val, pd.Series):
+            val = unwrap(val)
+            text = val.name
+            try:
+                text = val.names
+            except:
+                pass
+            data.append(go.Scatter(x=val.index, y=val, name=val.name, text=text, mode=mode, textposition='top center'))
         # vertical date line
         elif isinstance(val, datetime.datetime):
             shapes.append(createVerticalLine(val))
@@ -1403,12 +1460,16 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False):
     layout = go.Layout(legend=legendArgs, 
                        showlegend=legend, 
                        margin=margin, 
-                       yaxis=dict(type=yaxisScale, autorange=True), 
+                       yaxis=dict(type=yaxisScale, autorange=True, title=ylabel),  # titlefont=dict(size=18)
+                       xaxis=dict(title=xlabel), # titlefont=dict(size=18) 
                        shapes=shapes, 
                        title=title,
                        hovermode = 'closest')
     fig = go.Figure(data=data, layout=layout)
     py.iplot(fig)
+
+def plot_scatter(*lst, title=None, xlabel=None, ylabel=None):
+    plot(*lst, lines=True, markers=True, annotations=True, legend=False, log=False, title=title, xlabel=xlabel, ylabel=ylabel)
 
 # show a stacked area chart normalized to 100% of multiple time series
 def plotly_area(df, title=None):
@@ -1465,7 +1526,8 @@ def _end(s):
     return s.index[-1]
 
 def getCommonDate(data, agg=max, get_fault=False):
-    data = [s for s in data if isinstance(s, Wrapper) or isinstance(s, pd.Series)]
+    data = flattenLists(data)
+    data = [s for s in data if is_series(s)]
     if not data:
         return None
     dates = [_start(s) for s in data if s.shape[0] > 0]
@@ -1498,7 +1560,7 @@ def doTrim(data, silent=False, trim=True):
             date = getCommonDate(data)
         else:
             date, max_fault = getCommonDate(data, get_fault=True)
-    elif isinstance(trim, pd.Series) or isinstance(trim, Wrapper):
+    elif is_series(trim):
         date = trim.index[0]
         max_fault = trim.name
     elif isinstance(trim, pd.Timestamp):
@@ -1513,17 +1575,21 @@ def doTrim(data, silent=False, trim=True):
         return data
     newArr = []
     for s in data:
-        if isinstance(s, Wrapper) or isinstance(s, pd.Series):
+        if is_series(s):
             s = s[date:]
             if s.shape[0] == 0:
                 continue
+        if isinstance(s, list):
+            s = [x[date:] for x in s]
+            s = [x for x in s if x.shape[0] > 0]
         newArr.append(s)
     if not silent:
         min_date, min_fault = getCommonDate(data, agg=min, get_fault=True)
-        msg = f"trimmed data from {min_date:%Y-%m-%d} [{min_fault}] to {date:%Y-%m-%d} [{max_fault}]"
-        if not msg in trimmed_messages:
-            trimmed_messages.add(msg)
-            print(msg)
+        if min_date != date:
+            msg = f"trimmed data from {min_date:%Y-%m-%d} [{min_fault}] to {date:%Y-%m-%d} [{max_fault}]"
+            if not msg in trimmed_messages:
+                trimmed_messages.add(msg)
+                print(msg)
     return newArr
 
 def trimBy(trimmed, by):
@@ -1670,96 +1736,124 @@ def show_scatter_returns(y_sym, x_sym, freq=None):
 
 def warn(*arg, **args):
     print(*arg, file=sys.stderr, **args)
+
+
+# def show_risk_return(*lst, ret_func=None, risk_func=None, trim=True, **args):
+#     plt.figure()
+#     allItems = []
+#     flatItems = []
+#     listItems = []
     
-def showRiskReturn(*lst, ret_func=None, risk_func=None, trim=True, **args):
-    plt.figure()
-    allItems = []
-    flatItems = []
-    listItems = []
+#     lst = lmap(get, lst)
     
-    lst = lmap(get, lst)
+#     for x in lst:
+#         if isinstance(x, list):
+#             allItems += x
+#             listItems.append(x)
+#         else:
+#             allItems.append(x)
+#             flatItems.append(x)
     
-    for x in lst:
-        if isinstance(x, list):
-            allItems += x
-            listItems.append(x)
-        else:
-            allItems.append(x)
-            flatItems.append(x)
-    
-    if trim:
-        if len(listItems) > 0:
-            warn("showRiskReturn: Cannot auto-trim with list-items")
-        else:
-            allItems = doTrim(allItems)
-            flatItems = allItems
+#     if trim:
+#         if len(listItems) > 0:
+#             warn("showRiskReturn: Cannot auto-trim with list-items")
+#         else:
+#             allItems = doTrim(allItems)
+#             flatItems = allItems
             
-    if len(listItems) == 0:
-        showRiskReturnUtil(flatItems, ret_func=ret_func, risk_func=risk_func, **args)
-    else:
-        args2 = args.copy()
-        #del args2["annotations"]
-        showRiskReturnUtil(allItems, ret_func=ret_func, risk_func=risk_func, annotations=False, **args2)
-        if len(flatItems) > 0:
-            showRiskReturnUtil(flatItems, ret_func=ret_func, risk_func=risk_func, setlim=False, **args)
-        for lst in listItems:
-            annotations = [""] * len(lst)
-            annotations[0] = lst[0].name
-            annotations[-1] = lst[-1].name
-            #set_if_none(args, "annotations", annotations)
-            showRiskReturnUtil(lst, ret_func=ret_func, risk_func=risk_func, setlim=False, lines=True, annotations=annotations, **args)
-    
-def showRiskReturnUtil(lst, ret_func=None, risk_func=None, **args):
-    if len(lst) == 0:
-        return
+#     if len(listItems) == 0:
+#         showRiskReturnUtil(flatItems, ret_func=ret_func, risk_func=risk_func, **args)
+#     else:
+#         args2 = args.copy()
+#         #del args2["annotations"]
+#         showRiskReturnUtil(allItems, ret_func=ret_func, risk_func=risk_func, annotations=False, **args2)
+#         if len(flatItems) > 0:
+#             showRiskReturnUtil(flatItems, ret_func=ret_func, risk_func=risk_func, setlim=False, **args)
+#         for lst in listItems:
+#             annotations = [""] * len(lst)
+#             annotations[0] = lst[0].name
+#             annotations[-1] = lst[-1].name
+#             #set_if_none(args, "annotations", annotations)
+#             showRiskReturnUtil(lst, ret_func=ret_func, risk_func=risk_func, setlim=False, lines=True, annotations=annotations, **args)
+
+def show_risk_return(*lst, ret_func=None, risk_func=None, trim=True, title=None, **args):
+    title = title or "Risk-Return"
     if ret_func is None: ret_func = cagr
     if risk_func is None: risk_func = ulcer
-    lst = [get(s) for s in lst]
-    ys = [ret_func(s) for s in lst]
-    xs = [risk_func(s) for s in lst]
-    
-    names = None
-    if args.get("annotations", None) is None:
-        if "name" in dir(lst[0]) or "s" in dir(lst[0]):
-            names = [s.name for s in lst]
-    elif args.get("annotations", None) != False:
-        names = args.get("annotations", None)
-    if names is None:
-        names = ["unnamed"] * len(lst)
-    names = ["nan" if n is None else n for n in names]
-    
-    df = pd.DataFrame({"x": xs, "y": ys, "name": names})
-    nans = df[df.isnull().any(axis=1)]["name"]
-    if nans is None:
-        nans = []
-    if len(nans) > 0:
-        print(f'dropping series with nan risk/return: {" | ".join(nans)}')
-    df = df.dropna()
-    xs = df["x"].values
-    ys = df["y"].values
-    names = df["name"].values
-            
-    if args.get("annotations", None) == False:
-        names = None
-    args['annotations'] = names
-    
-    xlabel=risk_func.__name__
-    ylabel=ret_func.__name__
-    args = set_if_none(args, "show_zero_point", True)
-    show_scatter(xs, ys, xlabel=xlabel, ylabel=ylabel, **args)
+    lst = get(lst, trim=trim)
+    lst = [x if isinstance(x, list) else [x] for x in lst]
+    res = [get_risk_return_series(x, ret_func=ret_func, risk_func=risk_func) for x in lst]
+    plot_scatter(*res, title=title, xlabel=risk_func.__name__, ylabel=ret_func.__name__)
 
-def show_risk_return_ntr_mode(lst, ret_func=None):
+showRiskReturn = show_risk_return # legacy
+
+def get_risk_return_series(lst, ret_func, risk_func, **args):
+    if len(lst) == 0:
+        return
+    lst = [get(s) for s in lst]
+    ys = [ret_func(unwrap(s)) for s in lst]
+    xs = [risk_func(unwrap(s)) for s in lst]
+    names = [s.name for s in lst]
+
+    res = pd.Series(ys, xs)
+    res.name = names[0]
+    res.names = names
+    return res
+    #plot(pd.Series(xs, ys), pd.Series(xs, ys+1), lines=False, markers=True)
+
+# def showRiskReturnUtil(lst, ret_func=None, risk_func=None, **args):
+#     if len(lst) == 0:
+#         return
+#     if ret_func is None: ret_func = cagr
+#     if risk_func is None: risk_func = ulcer
+#     lst = [get(s) for s in lst]
+#     ys = [ret_func(s) for s in lst]
+#     xs = [risk_func(s) for s in lst]
+    
+#     names = None
+#     if args.get("annotations", None) is None:
+#         if "name" in dir(lst[0]) or "s" in dir(lst[0]):
+#             names = [s.name for s in lst]
+#     elif args.get("annotations", None) != False:
+#         names = args.get("annotations", None)
+#     if names is None:
+#         names = ["unnamed"] * len(lst)
+#     names = ["nan" if n is None else n for n in names]
+    
+#     df = pd.DataFrame({"x": xs, "y": ys, "name": names})
+#     nans = df[df.isnull().any(axis=1)]["name"]
+#     if nans is None:
+#         nans = []
+#     if len(nans) > 0:
+#         print(f'dropping series with nan risk/return: {" | ".join(nans)}')
+#     df = df.dropna()
+#     xs = df["x"].values
+#     ys = df["y"].values
+#     names = df["name"].values
+            
+#     if args.get("annotations", None) == False:
+#         names = None
+#     args['annotations'] = names
+    
+#     xlabel=risk_func.__name__
+#     ylabel=ret_func.__name__
+#     args = set_if_none(args, "show_zero_point", True)
+#     show_scatter(xs, ys, xlabel=xlabel, ylabel=ylabel, **args)
+
+def show_risk_return_modes(*lst, ret_func=None, modes=['TR', 'NTR', 'PR'], title=None):
     def get_data(lst, mode):
         return get(lst, mode=mode, despike=True, trim=True, reget=True)
 
-    tr = get_data(lst, "TR")
-    ntr = get_data(lst, "NTR")
-    pr = get_data(lst, "PR")
-    all = [[a, b, c] for a, b, c in zip(tr, ntr, pr)]
-    showRiskReturn(*all, ret_func=ret_func)
+    data_lst = [get_data(lst, mode) for mode in modes]
+    all = [list(tup) for tup in zip(*data_lst)]
+    show_risk_return(*all, ret_func=ret_func, title=title)
     #showRiskReturn(*ntr, ret_func=ret_func)
     #for a, b in zip(tr, ntr):
     #    showRiskReturn([a, b], setlim=False, lines=True, ret_func=ret_func, annotations=False)    
+
+def show_risk_yield(*lst, title="Risk-Yield TR-NTR"):
+    show_risk_return_modes(*lst, ret_func=get_curr_yield, modes=['TR', 'NTR'], title=title)
+
 
 def show_min_max_bands(symbol, n=365, showSymbol=False):
     x = get(symbol)
@@ -1838,12 +1932,22 @@ def show_rolling_beta(target, sources, window=None, rsq=True, betaSum=False, pva
     show(res, ta=False)
 
         
-def mix(s1, s2, n=10, **getArgs):
+def mix(s1, s2, n=10, do_get=True, **getArgs):
     part = 100/n
     res = []
     for i in range(n+1):
-        res.append(get({s1: i*part, s2: (100-i*part)}, **getArgs))
-    return res
+        x = {s1: i*part, s2: (100-i*part)}
+        port = dict_to_port_name(x, drop_zero=True, drop_100=True, use_sym_name=True)
+        name = dict_to_port_name(x, drop_zero=True, drop_100=True, use_sym_name=False)
+        if i > 0 and i < n:
+            name = ''
+        if do_get:
+            x = get(x, **getArgs)
+            x.name = name
+        else:
+            x = f"{port}={name}"
+        res.append(x)
+    return lmap(unwrap, res)
         
 def ma(s, n):
     n = int(n)
@@ -2854,6 +2958,10 @@ def getYield(symbolName, period=None, altPriceName=None, sumMonths=None):
         symbolName, period = symbolName
     if isinstance(symbolName, Wrapper) or isinstance(symbolName, pd.Series):
         symbolName = symbolName.name
+    if isinstance(symbolName, Symbol):
+        sym_mode = symbolName.mode
+    else:
+        sym_mode = None
     if symbolName.startswith("~"):
         return pd.Series()
     price = get(altPriceName or symbolName, mode="PR")
@@ -2861,6 +2969,12 @@ def getYield(symbolName, period=None, altPriceName=None, sumMonths=None):
     divs = divs[divs.s>0]
     if len(divs.s) == 0:
         return divs
+    
+    if sym_mode == "NTR":
+        divs *= 0.75
+    elif sym_mode == "PR":
+        divs *= 0
+
     mult = 1
     if period is None:
         monthds_diff = get_divs_interval(divs)
