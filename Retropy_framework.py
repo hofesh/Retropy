@@ -23,6 +23,7 @@ import requests
 from io import StringIO
 import re
 import math
+import types
 
 import pandas as pd
 import numpy as np
@@ -74,10 +75,13 @@ from IPython.core.interactiveshell import InteractiveShell
 InteractiveShell.ast_node_interactivity = "all"
 
 pd.set_option('display.float_format', lambda x: '{:,.4f}'.format(x))
-pd.set_option('display.max_rows', 5000)
-pd.set_option('display.max_columns', 500)
+pd.set_option('display.max_rows', 30)
+pd.set_option('display.max_columns', 30)
 
 from IPython.display import clear_output, display
+
+
+from framework.pca import *
 
 
 # In[ ]:
@@ -222,12 +226,12 @@ def curr_price(symbol):
 
 def getForex(fromCur, toCur, inv=False):
     if fromCur == toCur: return 1
-    #tmp = get(fromCur + toCur + "@CUR").s
+    #tmp = get(fromCur + toCur + "@CUR")
     if inv:
         tmp = 1/getForex(toCur, fromCur, inv=False)
         tmp.name = fromCur + "/" + toCur + "@IC"
         return tmp
-    tmp = get(fromCur + "/" + toCur + "@IC").s
+    tmp = get(fromCur + "/" + toCur + "@IC")
     tmp = tmp.reindex(pd.date_range(start=tmp.index[0], end=tmp.index[-1]))
     tmp = tmp.fillna(method="ffill")
     return tmp
@@ -248,14 +252,18 @@ def convertToday(value, fromCur, toCur):
 # In[ ]:
 
 
-def getName(s, use_sym_name=False):
+def get_name(s, use_sym_name=False):
+    if is_series(s):
+        s = s.name
     if isinstance(s, str):
-        sym = Symbol(s)
-        if use_sym_name:
-            return sym.fullname_nonick
-        else:
-            return sym.pretty_name
-    return s.name
+        s = Symbol(s)
+    if not isinstance(s, Symbol):
+        raise Exception(f"Can't get name of type {s}")
+    if use_sym_name:
+        return s.fullname_nonick
+    else:
+        return s.pretty_name
+getName = get_name
 
 def toSymbol(sym, source, mode):
     if isinstance(sym, Symbol):
@@ -1067,6 +1075,8 @@ if not "Wrapper" in locals():
             return Wrapper.doop(self, other, "*", lambda x, y: x * y, right=True)
 
 def wrap(s, name=""):
+    return s
+
     name = name or s.name
     #if not name:
     #    raise Exception("no name")
@@ -1082,8 +1092,10 @@ def unwrap(s):
         return s.s
     return s
 
-name = wrap # syn-sugar
-
+def name(s, n):
+    if is_series(s):
+        s.name = n
+    return s
     
 data_sources = {
     
@@ -1201,7 +1213,7 @@ def get_port(d, name, getArgs):
     args["trim"] = True
     syms = get(list(d.keys()), **args)
     syms = dict(zip(d.keys(), syms))
-    df = pd.DataFrame(logret(syms[k].s, fillna=True)*v/100 for k,v in d.items()).T.dropna()
+    df = pd.DataFrame(logret(syms[k], fillna=True)*v/100 for k,v in d.items()).T.dropna()
     res = Wrapper(i_logret(df.sum(axis=1)))
     res.name = name
     return res
@@ -1220,9 +1232,18 @@ def parse_portfolio_def(s):
     parts = s.split("|")
     for p in parts:
         parts2 = p.split(":")
-        if len(parts2) != 2:
+        if len(parts2) > 2:
             return None
-        d[parts2[0]] = float(parts2[1])
+        elif len(parts2) == 2:
+            d[parts2[0]] = float(parts2[1])
+        else:
+            d[parts2[0]] = None
+    
+    # equal weights
+    if np.all([x is None for x in d.values()]):
+        if len(d) == 1: # a single equal weight, is just a symbol, not a portfolio
+            return None
+        d = {k: 100/len(d) for k in d.keys()}
     return d
 
 def getNtr(s, getArgs):
@@ -1237,7 +1258,7 @@ def getNtr(s, getArgs):
     divs = divs * (1-tax)   # strip divs from their taxes
     divs = divs / pr        # get the div to price ratio
     divs = divs.fillna(0)   # fill gaps with zero
-    r = 1 + divs.s          # add 1 for product later
+    r = 1 + divs          # add 1 for product later
     r = r.cumprod()         # build the cum prod ratio
     ntr = (pr * r).dropna() # mul the price with the ratio - this is the dividend reinvestment
     #ntr = wrap(ntr, s.name + " NTR")
@@ -1246,6 +1267,11 @@ def getNtr(s, getArgs):
 
 
 def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode="TR", secondary="Y", interpolate=True, despike=False, trim=False, reget=None, start=None, freq=None):
+
+    # tmp
+    # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
+    #     raise Exception("Invalid get() API usage")
+
     #print(f"get: {symbol} [{type(symbol)}] [source: {source}]")
     getArgs = {}
     getArgs["source"] = source
@@ -1262,7 +1288,7 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     getArgs["start"] = start
     getArgs["freq"] = freq
     
-    if isinstance(symbol, tuple):
+    if isinstance(symbol, tuple) or isinstance(symbol, map) or isinstance(symbol, types.GeneratorType):
         symbol = list(symbol)
     if isinstance(symbol, list):
         lst = symbol
@@ -1393,7 +1419,7 @@ def createHorizontalLine(yval):
         }
     return shape
     
-def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, annotations=False, xlabel=None, ylabel=None):
+def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, annotations=False, xlabel=None, ylabel=None, show_zero_point=False):
     if not ipy:
         warn("not plotting, no iPython env")
         return
@@ -1434,8 +1460,7 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
     
     for d in data:
         d = d.y
-        if isinstance(d, Wrapper):
-            d = d.s
+        d = unwrap(d)
         if np.any(d <= 0):
             log = False
             
@@ -1457,19 +1482,29 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
     else:
         legendArgs = {}
     yaxisScale = "log" if log else None
+    rangemode = "tozero" if show_zero_point else "normal"
     layout = go.Layout(legend=legendArgs, 
                        showlegend=legend, 
                        margin=margin, 
-                       yaxis=dict(type=yaxisScale, autorange=True, title=ylabel),  # titlefont=dict(size=18)
-                       xaxis=dict(title=xlabel), # titlefont=dict(size=18) 
+                       yaxis=dict(rangemode=rangemode, type=yaxisScale, autorange=True, title=ylabel),  # titlefont=dict(size=18)
+                       xaxis=dict(rangemode=rangemode, title=xlabel), # titlefont=dict(size=18) 
                        shapes=shapes, 
                        title=title,
                        hovermode = 'closest')
     fig = go.Figure(data=data, layout=layout)
     py.iplot(fig)
 
-def plot_scatter(*lst, title=None, xlabel=None, ylabel=None):
-    plot(*lst, lines=True, markers=True, annotations=True, legend=False, log=False, title=title, xlabel=xlabel, ylabel=ylabel)
+# simple X, Y scatter
+def plot_scatter_xy(x, y, names=None, title=None, xlabel=None, ylabel=None, show_zero_point=False):
+    ser = pd.Series(y, x)
+    if names:
+        ser.names = names
+    plot(ser, lines=False, markers=True, annotations=True, legend=False, log=False, title=title, xlabel=xlabel, ylabel=ylabel, show_zero_point=show_zero_point)
+
+# this also supports line-series and single points
+# each point must be a series with length=1
+def plot_scatter(*lst, title=None, xlabel=None, ylabel=None, show_zero_point=False):
+    plot(*lst, lines=True, markers=True, annotations=True, legend=False, log=False, title=title, xlabel=xlabel, ylabel=ylabel, show_zero_point=show_zero_point)
 
 # show a stacked area chart normalized to 100% of multiple time series
 def plotly_area(df, title=None):
@@ -1525,12 +1560,20 @@ def _start(s):
 def _end(s):
     return s.index[-1]
 
-def getCommonDate(data, agg=max, get_fault=False):
+def getCommonDate(data, pos, agg=max, get_fault=False):
     data = flattenLists(data)
     data = [s for s in data if is_series(s)]
     if not data:
-        return None
-    dates = [_start(s) for s in data if s.shape[0] > 0]
+        if get_fault:
+            return None, None
+        else:
+            return None
+    if pos == 'start':
+        dates = [_start(s) for s in data if s.shape[0] > 0]
+    elif pos == 'end':
+        dates = [_end(s) for s in data if s.shape[0] > 0]
+    else:
+        raise Exception(f"Invalid pos: {pos}")
     if len(dates) == 0:
         if get_fault:
             return None, None
@@ -1550,16 +1593,28 @@ def is_series(x):
 
 trimmed_messages = set()
 def doTrim(data, silent=False, trim=True):
+    data = _doTrim(data, 'start', silent=silent, trim=trim)
+    data = _doTrim(data, 'end', silent=silent, trim=trim)
+    return data
+
+def _doTrim(data, pos, silent=False, trim=True):
     # we should first dropna, as there is no point in trimming to a common date
     # where some of the series starts with nan's
     data = [s.dropna() if is_series(s) else s for s in data]
+
+    if pos == 'start':
+        agg = max
+        r_agg = min
+    else:
+        agg = min
+        r_agg = max
     
     # find common date
     if trim == True:
         if silent:
-            date = getCommonDate(data)
+            date = getCommonDate(data, pos, agg=agg)
         else:
-            date, max_fault = getCommonDate(data, get_fault=True)
+            date, max_fault = getCommonDate(data, pos, agg=agg, get_fault=True)
     elif is_series(trim):
         date = trim.index[0]
         max_fault = trim.name
@@ -1569,27 +1624,41 @@ def doTrim(data, silent=False, trim=True):
     else:
         raise Exception(f"unsupported trim type {type(trim)}")
         
+    # nothing to trim
     if date is None:
         if not silent:
             print("Unable to trim data")
         return data
+
+    # trim
     newArr = []
     for s in data:
         if is_series(s):
-            s = s[date:]
+            if pos == 'start':
+                s = s[date:]
+            else:
+                s = s[:date]
             if s.shape[0] == 0:
                 continue
-        if isinstance(s, list):
-            s = [x[date:] for x in s]
+        elif isinstance(s, list):
+            if pos == 'start':
+                s = [x[date:] for x in s]
+            else:
+                s = [x[:date] for x in s]
             s = [x for x in s if x.shape[0] > 0]
+        else:
+            warn(f"not trimming type {type(s)}, {s}")
         newArr.append(s)
+
+    # report results
     if not silent:
-        min_date, min_fault = getCommonDate(data, agg=min, get_fault=True)
+        min_date, min_fault = getCommonDate(data, pos, agg=r_agg, get_fault=True)
         if min_date != date:
-            msg = f"trimmed data from {min_date:%Y-%m-%d} [{min_fault}] to {date:%Y-%m-%d} [{max_fault}]"
+            msg = f"trimmed |{pos}| data from {min_date:%Y-%m-%d} [{min_fault}] to {date:%Y-%m-%d} [{max_fault}]"
             if not msg in trimmed_messages:
                 trimmed_messages.add(msg)
                 print(msg)
+
     return newArr
 
 def trimBy(trimmed, by):
@@ -1605,7 +1674,7 @@ def sync(a, b):
     return a, b
 
 def doAlign(data):
-    date = getCommonDate(data)
+    date = getCommonDate(data, 'start')
     if date is None:
         return data
     newArr = []
@@ -1721,8 +1790,11 @@ def show_scatter(xs, ys, setlim=True, lines=False, color=None, annotations=None,
                 txt = globals()["fixtext"](txt)
             plt.annotate(txt, (xs[i], ys[i]), fontsize=14)
 
+def show_modes_comp(a, b):
+    show([r(x, y) for x,y in zip(modes(a), modes(b))], 1)
+
 def show_scatter_returns(y_sym, x_sym, freq=None):
-    x_sym, y_sym = get(x_sym).s, get(y_sym).s
+    x_sym, y_sym = get(x_sym), get(y_sym)
     x, y = doTrim([x_sym, y_sym])
     x, y = sync(x, y)
     
@@ -1783,7 +1855,7 @@ def show_risk_return(*lst, ret_func=None, risk_func=None, trim=True, title=None,
     lst = get(lst, trim=trim)
     lst = [x if isinstance(x, list) else [x] for x in lst]
     res = [get_risk_return_series(x, ret_func=ret_func, risk_func=risk_func) for x in lst]
-    plot_scatter(*res, title=title, xlabel=risk_func.__name__, ylabel=ret_func.__name__)
+    plot_scatter(*res, title=title, xlabel=risk_func.__name__, ylabel=ret_func.__name__, show_zero_point=True)
 
 showRiskReturn = show_risk_return # legacy
 
@@ -1851,8 +1923,31 @@ def show_risk_return_modes(*lst, ret_func=None, modes=['TR', 'NTR', 'PR'], title
     #for a, b in zip(tr, ntr):
     #    showRiskReturn([a, b], setlim=False, lines=True, ret_func=ret_func, annotations=False)    
 
-def show_risk_yield(*lst, title="Risk-Yield TR-NTR"):
-    show_risk_return_modes(*lst, ret_func=get_curr_yield, modes=['TR', 'NTR'], title=title)
+def show_risk_yield_types(*lst, ret_func=None, types=['true', 'normal', 'rolling'], mode="TR", title=None):
+    def get_data(lst, type):
+        yld = [get_curr_yield(s, type=type) for s in lst]
+        rsk = lmap(ulcer, lst)
+        return pd.Series(yld, rsk)
+
+    lst = get(lst, mode=mode, trim=True, reget=True, despike=True)
+    res = []
+    for s in lst:
+        yld = []
+        rsk = []
+        for type in types:
+            yld.append(get_curr_yield(s, type=type))
+            rsk.append(ulcer(s))
+        ser = pd.Series(yld, rsk)
+        ser.name = s.name
+        ser.names = [f"{s.name} {t}" for t in types]
+        res.append(ser)
+    
+    title = title or f"Risk - {mode} Yield Types"
+    plot_scatter(*res, title=title, xlabel="ulcer", ylabel="current yield", show_zero_point=True)
+
+
+def show_risk_yield(*lst, title="Risk - NORMAL Yield TR-NTR"):
+    show_risk_return_modes(*lst, ret_func=get_curr_yield_normal, modes=['TR', 'NTR'], title=title)
 
 
 def show_min_max_bands(symbol, n=365, showSymbol=False):
@@ -1932,7 +2027,7 @@ def show_rolling_beta(target, sources, window=None, rsq=True, betaSum=False, pva
     show(res, ta=False)
 
         
-def mix(s1, s2, n=10, do_get=True, **getArgs):
+def mix(s1, s2, n=10, do_get=False, **getArgs):
     part = 100/n
     res = []
     for i in range(n+1):
@@ -2124,7 +2219,9 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
         return np.sum((logret(target) - logret(pred)) ** 2)
 
     # prep data
+    sources = [s for s in sources if (not s is target) and getName(s) != getName(target)]
     orig_sources = sources
+
     target, sources = prep_as_df(target, sources, as_geom_value=fit_values, freq=freq)
     sources_logret = sources.apply(lambda x: logret(x, dropna=False), axis=0)
     n_sources = sources_logret.shape[1]
@@ -2379,14 +2476,15 @@ def lrret_incremental(target, sources, show=True, show_steps=False, max_n=None, 
             
     return res
         
-def lrret_mutual_cross(sources, show=True, **lrret_args):
+def lrret_mutual_cross(*sources, show=True, **lrret_args):
     if len(sources) <= 1:
         return pd.Series()
     sources = get(sources, trim=True, reget=False)
     res = []
     for target in sources:
-        rest = sources.copy()
-        rest.remove(target)
+        rest = [s for s in sources if s.name != target.name]
+        #rest = sources.copy()
+        #rest.remove(target)
         rs = lrret(target, rest, return_res=True, return_ser=False, show_res=False, **lrret_args)
         res.append((rs['R^2'], target.name))
         port = dict_to_port_name((rs["ser"]*100).to_dict(), drop_zero=True)
@@ -2406,10 +2504,10 @@ def lrret_mutual_cross(sources, show=True, **lrret_args):
             
     return res
 
-def lrret_mutual_incremental(sources, base=None, show=True, max_n=None, **lrret_args):
+def lrret_mutual_incremental(*sources, base=None, show=True, max_n=None, **lrret_args):
     if base is None:
         base = lc
-    base, *sources = get([base] + sources, trim=True, reget=False)
+    base, *sources = get([base] + list(sources), trim=True, reget=False)
     cum_sources = [base]
     top = []
     while len(sources) > 0:
@@ -2445,13 +2543,13 @@ def lrret_mutual_incremental(sources, base=None, show=True, max_n=None, **lrret_
             
     return res
            
-def lrret_mutual(sources, base=None, show=True, max_n=None, **lrret_args):
+def lrret_mutual(*sources, base=None, show=True, max_n=None, **lrret_args):
     print()
     print("Cross:")
-    res_cross = lrret_mutual_cross(sources, show=False)
+    res_cross = lrret_mutual_cross(*sources, show=False)
     print()
     print("Incremental:")
-    res_inc = lrret_mutual_incremental(sources, show=False)    
+    res_inc = lrret_mutual_incremental(*sources, show=False)    
     if show:
         plt.figure()
         show_series(res_cross, figure=True, label="Cross")
@@ -2479,8 +2577,6 @@ def mean_logret_series(y):
     return res
 
 def liquidation(s):
-    if "s" in dir(s):
-        s = s.s
     return (s/s[0]-1)*0.75+1
 
 def getMedianSer(lst):
@@ -2491,6 +2587,11 @@ def getMeanSer(lst):
     df = pd.DataFrame([unwrap(s) for s in lst]).T
     return wrap(df.mean(axis=1), "mean")
 
+def r(a, b):
+    a, b = get([a, b])
+    x = a / b
+    x.name = a.name + " / " + b.name
+    return x
 
 # In[ ]:
 
@@ -2939,7 +3040,7 @@ def divs(symbolName, period=None, fill=False):
     if isinstance(symbolName, Wrapper) or isinstance(symbolName, pd.Series):
         symbolName = symbolName.name
     divs = get(symbolName, mode="divs")
-    divs = divs[divs.s>0]
+    divs = divs[divs>0]
     if period:
         divs = wrap(divs.rolling(period).sum())
     if fill:
@@ -2953,10 +3054,37 @@ def get_divs_interval(divs):
     monthds_diff = monthds_diff[-5:].median()
     return monthds_diff
 
-def getYield(symbolName, period=None, altPriceName=None, sumMonths=None):
-    if isinstance(symbolName, tuple) and period is None:
-        symbolName, period = symbolName
-    if isinstance(symbolName, Wrapper) or isinstance(symbolName, pd.Series):
+def show_yields(sym):
+    n = get_name(sym)
+    true_yield = name(get_yield(sym, type='true'), n + " true")
+    normal_yield = name(get_yield(sym, type='normal'), n + " normal")
+    rolling_yield = name(get_yield(sym, type='rolling'), n + " rolling")
+    show(true_yield, normal_yield, rolling_yield, ta=False, log=False)
+
+def get_yield_true(sym):
+    return get_yield(sym, type='true')
+
+def get_yield_normal(sym):
+    return get_yield(sym, type='normal')
+
+def get_yield_rolling(sym):
+    return get_yield(sym, type='rolling')
+
+def get_yield(sym, type=None):
+    type = type or 'true'
+    if type == 'true':
+        return _get_yield(sym, window_months=1)
+    if type == 'normal':
+        yld_true = _get_yield(sym, window_months=1)
+        return mm(yld_true, 5)
+    if type == 'rolling':
+        return _get_yield(sym, window_months=12)
+    raise Exception(f"Invalid yield type {type}")
+
+def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months=12):
+    # if isinstance(symbolName, tuple) and dists_per_year is None:
+    #     symbolName, dists_per_year = symbolName
+    if is_series(symbolName):
         symbolName = symbolName.name
     if isinstance(symbolName, Symbol):
         sym_mode = symbolName.mode
@@ -2966,8 +3094,8 @@ def getYield(symbolName, period=None, altPriceName=None, sumMonths=None):
         return pd.Series()
     price = get(altPriceName or symbolName, mode="PR")
     divs = get(symbolName, mode="divs")
-    divs = divs[divs.s>0]
-    if len(divs.s) == 0:
+    divs = divs[divs>0]
+    if len(divs) == 0:
         return divs
     
     if sym_mode == "NTR":
@@ -2975,44 +3103,103 @@ def getYield(symbolName, period=None, altPriceName=None, sumMonths=None):
     elif sym_mode == "PR":
         divs *= 0
 
-    mult = 1
-    if period is None:
-        monthds_diff = get_divs_interval(divs)
-        
-        if sumMonths is None:
-            if monthds_diff == 1:
-                sumMonths = 12
-            else:
-                sumMonths = 12
+    # sometimes 2 or more divs can happen in the same month (capital gains)
+    # we must resample and sum to 1-month resolution to correctly calculate the months_between_dists
+    # and later to correctly do a rolling sum
+    divs = divs.resample("M").sum()
+    divs = divs[divs>0]
 
-        period = int(sumMonths // monthds_diff)
-        mult = 12 / sumMonths
+    if dists_per_year is None:
+        months_between_dists = get_divs_interval(divs)
+        dists_per_year = int(12 // months_between_dists)
+    else:
+        months_between_dists = int(12 // dists_per_year)
 
-        #periods = divs.s.index.year.value_counts()
-        #periods = periods.sort_index()
-        #periods = periods[-5:]
-        #period = int(periods.median())
-        
-        #print(f"auto period for {symbolName} is {period}")
-        #print(divs.s.index.year.value_counts())
-    if period:
-        divs = wrap(divs.rolling(period).sum()) * mult
-    return name(divs/price*100, divs.name).dropna()
+    if window_months < months_between_dists:
+        warn(f"auto correcting window_months to {months_between_dists}")
+        window_months = months_between_dists
 
-def get_curr_yield(s, period=None):
-    yld = getYield(s, period=period).dropna()
+    n = int(window_months / months_between_dists)
+    mult = 12 / window_months
+    if n > 0:
+        divs = divs.rolling(n).sum() * mult
+    yld = divs / price * 100
+    return name(yld, divs.name).dropna()
+
+def get_curr_yield_normal(s):
+    return get_curr_yield(s, type='normal')
+
+def get_curr_yield(s, type=None):
+    type = type or 'normal'
+    yld = get_yield(s, type=type).dropna()
     if yld.shape[0] == 0:
         return 0
     return yld[-1]
 
-def get_curr_net_yield(s, period=None):
-    return get_curr_yield(s, period=period)*0.75
+def get_curr_net_yield(s, type=None):
+    return get_curr_yield(s, type=type)*0.75
     
 def get_TR_from_PR_and_divs(pr, divs):
     m = d / pr + 1
     mCP = m.cumprod().fillna(method="ffill")
     tr = pr * mCP
     return wrap(tr, pr.name + " TR")
+
+def show_cum_income(*all):
+    income = lmap(lambda x: get_income(x, smooth=0), all)
+    income = [x.cumsum() for x in income]
+    show(income, ta=False, log=False, legend=False, title="cumulative net income")
+
+def analyze_assets(*all, start=None, despike=True):
+    all = get(all, start=start, despike=despike) # note we don't trim
+    
+    # risk-return
+    bases = [ mix(lc, gb, do_get=False), mix(i_ac, gb, do_get=False)]
+    lst = get(all + bases, mode="TR", reget=True)
+    show_risk_return(*lst, title="TR Risk-Return")
+    lst = get(all + bases, mode="NTR", reget=True)
+    show_risk_return(*lst, title="NTR Risk-Return")
+    lst = get(all + bases, mode="PR", reget=True)
+    show_risk_return(*lst, title="PR Risk-Return")
+    show_risk_return_modes(*all)
+    
+
+    # Yields
+    show_risk_yield_types(*all)
+    show_risk_yield(*all)
+    show_risk_return_modes(*all, ret_func=get_curr_yield_normal, modes=['TR'], title='Risk - NORMAL Yield TR')
+    show_risk_return_modes(*all, ret_func=get_curr_yield_normal, modes=['NTR'], title='Risk - NORMAL Yield NTR')
+
+    yields = lmap(get_yield_true, all)
+    inf = get_inflation(365*7)[getCommonDate(yields, 'start', agg=min):]
+    show(yields, inf, 0, ta=False, log=False, title="nominal TRUE gross yield")    
+    yields = lmap(get_yield_normal, all)
+    show(yields, inf, 0, ta=False, log=False, title="nominal NORMAL gross yield")    
+    yields = lmap(get_yield_rolling, all)
+    show(yields, inf, 0, ta=False, log=False, title="nominal ROLLING gross yield")    
+    
+    yields = lmap(lambda x: get_real_yield(x, 'normal'), all)
+    show(yields, 0, ta=False, log=False, title="REAL gross NORMAL yield")
+
+
+    # Income
+    show_cum_income(*all)
+    show_cum_income(*get(all, trim=True))
+    
+    income = lmap(get_income, all)
+    show(income, 0, ta=False, log=False, title="net income")
+
+    show(lmap(adj_inf, lmap(price, all)), 1, title="real price")
+
+    # show(lmap(roi, all), ta=False, log=False, title="net ROI")
+
+    # lrret
+    lrret_mutual(*all)
+
+    # PCA / MDS
+    show_mds(*all)
+    
+#show_cum_income(*all)
 
 def _despike(s, std, window, shift):
     if isinstance(s, list):
@@ -3057,7 +3244,7 @@ def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True
     if start:
         price = price[start:]
     units = value / price[0]
-    div = divs(sym).s
+    div = divs(sym)
     if start:
         div = div[start:]
     income = div * units
@@ -3078,6 +3265,10 @@ def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True
         income = ma(income, smooth)
     return name(income, price.name)
 
+def get_cum_income(sym):
+    income = get_income(sym, smooth=0)
+    return income.cumsum()
+
 def adj_inf(s):
     cpi = get(cpiUS)
     s = get(s)
@@ -3094,8 +3285,8 @@ def get_inflation(smooth=None):
         inf = ma(inf, smooth)
     return name(inf, "inflation")
 
-def get_real_yield(s):
-    yld = getYield(s)
+def get_real_yield(s, type=None):
+    yld = get_yield(s, type=type)
     inf = get_inflation(365*7)
     return name(yld - inf, yld.name + " real").dropna()
 
@@ -3111,7 +3302,11 @@ def cum_cagr(s):
     return (np.power(val, 1/years)-1)*100
     
 def modes(s):
-    return [get(s, mode="TR", reget=True), get(s, mode="NTR", reget=True), get(s, mode="PR", reget=True)]
+    res = [get(s, mode="TR", reget=True), get(s, mode="NTR", reget=True), get(s, mode="PR", reget=True)]
+    res[0].name += "-TR"
+    res[1].name += "-NTR"
+    res[2].name += "-PR"
+    return res
 
 # ## Generic Utils
 
@@ -3136,7 +3331,7 @@ def flattenLists(items):
     for x in items:
         if isinstance(x, list):
             res += x
-        elif isinstance(x, range) or isinstance(x, map):
+        elif isinstance(x, range) or isinstance(x, map) or isinstance(x, types.GeneratorType):
             res += list(x)
         else:
             res.append(x)
@@ -3222,3 +3417,104 @@ def get_anlz_factor(freq):
         base, mult = get_freq_code(freq)
     return PERIODS_PER_YEAR[(base // 1000) * 1000] / mult
 
+####################   PCA
+from sklearn.decomposition import PCA
+
+def get_ols_beta_dist(*all):
+    df = get_ret_df(*all)
+    n = df.shape[1]
+    res = np.empty((n, n))
+    for c1 in range(n):
+        for c2 in range(n):
+            y = df.iloc[:, c1]
+            X = df.iloc[:, c2]
+            beta1 = sm.OLS(y, X).fit().params[0]
+            beta2 = sm.OLS(X, y).fit().params[0]
+            x1 = np.array([beta1, beta2])
+            x2 = np.abs(x1 - 1)
+            val = x1[np.argmin(x2)]
+            res[c1, c2] = val
+    return pd.DataFrame(res, columns=df.columns, index=df.columns)
+
+
+def get_beta_dist(*all, type):
+    all = get(all)
+    names = lmap(get_name, all)
+    n = len(all)
+    data = np.empty((n, n))
+    for c1 in range(n):
+        for c2 in range(n):
+            if c1 == c2:
+                val = 1
+            else:
+                y = all[c1]
+                X = all[c2]
+#                print(y.name, X.name)
+                res = lrret(y, [X], return_res=True, show_res=False, sum1=(type=="R2"), pos_weights=(type=="R2"))
+                if type == 'R2':
+                    val = res['R^2']
+                elif type == 'weight':
+                    val = res['ser'][0]
+            data[c1, c2] = val
+    for c1 in range(n):
+        for c2 in range(n):
+            if type == "R2":
+                val = max(data[c1, c2], data[c2, c1])
+            elif type == "weight":
+                x1 = np.array([data[c1, c2], data[c2, c1]])
+                x2 = np.abs(x1 - 1)
+                val = x1[np.argmin(x2)]
+            data[c1, c2] = val
+            data[c2, c1] = val
+    df = pd.DataFrame(data, columns=names, index=names)
+    return df
+
+
+def get_ret_df(*lst):
+    lst = get(lst, trim=True)
+    df = pd.DataFrame({x.name: logret(x) for x in lst}).dropna()
+    return df
+
+def get_df(*lst):
+    lst = get(lst, trim=True)
+    df = pd.DataFrame({x.name: x for x in lst}).dropna()
+    return df
+
+def _show_mds(*all, type='cor'):
+    if type == 'cor':
+        df = get_ret_df(*all)
+        sim = np.corrcoef(df.T)
+        dist = 1-sim
+    elif type == 'cov':
+#         df = get_df(*all)
+        df = get_ret_df(*all)
+        sim = np.cov(df.T)
+        np.fill_diagonal(sim, 1)
+        dist = np.abs(1-sim)
+    elif type == 'weight':
+        dist = get_beta_dist(*all, type='weight')
+        dist = np.abs(1 - dist)
+    elif type == 'R2':
+        dist = get_beta_dist(*all, type='R2')
+        dist = 1 - dist
+    elif type == 'beta':
+        dist = get_ols_beta_dist(*all)
+        dist = np.abs(1 - dist)
+
+    names = lmap(get_name, all)
+    #dist = dist - dist.mean(axis=1)
+    if not isinstance(dist, pd.DataFrame):
+        dist = pd.DataFrame(dist, columns=names, index=names)
+    display(dist)
+    
+    pca = PCA(n_components=2)
+    tr = pca.fit_transform(dist)
+    plot_scatter_xy(tr[:, 0], tr[:, 1], names=names, title=f"{type} MDS")
+
+def show_mds(*all, type=['cor', 'cov', 'beta', 'weight', 'R2']):
+    if isinstance(type, str):
+        type = [type]
+    for t in type:
+        _show_mds(*all, type=t)
+
+####################   PCA

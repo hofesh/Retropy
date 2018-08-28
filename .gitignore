@@ -1,6 +1,8 @@
 .ipynb_checkpoints
+./Research/.ipynb_checkpoints/
 .dropbox
 private
 pyfinance/__pycache__
+framework/__pycache__
 __pycache__
 symbols/**/*._FAIL_
