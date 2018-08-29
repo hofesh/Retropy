@@ -137,7 +137,7 @@ class Symbol(str):
             fullname = parts[0].strip()
             self.nick = parts[1].strip()
         else:
-            self.nick = ""
+            self.nick = None
         self.fullname_nonick = fullname
         
         parts = fullname.split("!")
@@ -161,10 +161,15 @@ class Symbol(str):
 
     @property
     def pretty_name(self):
-        return str(self)
+        if not self.nick is None:
+            return self.nick
+            #return f"{self.fullname_nonick} = {self.nick}"
+        return self.fullname
         
     def __str__(self):
-        if self.nick:
+        return self.fullname # temp, to resolve the get, reget issue with named symbols
+
+        if not self.nick is None:
             return self.nick
             #return f"{self.fullname_nonick} = {self.nick}"
         return self.fullname
@@ -251,8 +256,12 @@ def convertToday(value, fromCur, toCur):
 
 # In[ ]:
 
+def get_pretty_name(s):
+    return get_name(s, use_sym_name=False)
 
 def get_name(s, use_sym_name=False):
+    if s is None:
+        return ""
     if is_series(s):
         s = s.name
     if isinstance(s, str):
@@ -266,6 +275,8 @@ def get_name(s, use_sym_name=False):
 getName = get_name
 
 def toSymbol(sym, source, mode):
+    if isinstance(sym, dict):
+        sym = dict_to_port_name(sym, use_sym_name=True)
     if isinstance(sym, Symbol):
         res = Symbol(sym.fullname)
         res.mode = mode or sym.mode
@@ -1195,6 +1206,38 @@ def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=Fa
             res.append(f"{getName(k, use_sym_name=use_sym_name)}:{round(v, rnd)}")
     return "|".join(res)
     
+# def get_port(d, name, getArgs):
+#     if isinstance(d, str):
+#         res = parse_portfolio_def(d)
+#         if not res:
+#             raise Exception("Invalid portfolio definition: " + d)
+#         d = res
+#     if not isinstance(d, dict):
+#         raise Exception("Portfolio definition must be str or dict, was: " + type(d))        
+#     if isinstance(name, dict):
+#         name = dict_to_port_name(d)
+#     if isinstance(name, str):
+#         parts = name.split("=")
+#         if len(parts) == 2:
+#             name = parts[1].strip()
+#     args = getArgs.copy()
+#     args["trim"] = True
+#     syms = get(list(d.keys()), **args)
+#     syms = dict(zip(d.keys(), syms))
+#     if args['mode'] == 'divs':
+#         #raise Exception("port divs not supported")
+#         df = pd.DataFrame(syms[k]*v/100 for k,v in d.items()).T
+#         df = df.dropna(how='all').fillna(0)
+#         res = df.sum(axis=1)
+#     else:
+#         df = pd.DataFrame(logret(syms[k], fillna=True)*v/100 for k,v in d.items()).T
+#         df = df.dropna() # should we use any or all ?
+#         res = i_logret(df.sum(axis=1))
+#     res.name = name
+#     return res
+
+# i_logret(weighted logret) - this is in effect daily rebalancing
+# weighted get - this is in effect no rebalancing
 def get_port(d, name, getArgs):
     if isinstance(d, str):
         res = parse_portfolio_def(d)
@@ -1209,12 +1252,35 @@ def get_port(d, name, getArgs):
         parts = name.split("=")
         if len(parts) == 2:
             name = parts[1].strip()
-    args = getArgs.copy()
-    args["trim"] = True
-    syms = get(list(d.keys()), **args)
-    syms = dict(zip(d.keys(), syms))
-    df = pd.DataFrame(logret(syms[k], fillna=True)*v/100 for k,v in d.items()).T.dropna()
-    res = Wrapper(i_logret(df.sum(axis=1)))
+
+    if getArgs['mode'] == 'divs':
+        #raise Exception("port divs not supported")
+        args = getArgs.copy() 
+        args["trim"] = True
+        syms = get(list(d.keys()), **args)
+        syms = dict(zip(d.keys(), syms))
+        df = pd.DataFrame(syms[k]*v/100 for k,v in d.items()).T
+        df = df.dropna(how='all').fillna(0)
+        res = df.sum(axis=1)
+    else:
+
+        if getArgs['rebal'] == 'none':
+            syms = get(list(d.keys()), **getArgs)
+            syms = doTrim(syms)
+            if getArgs['mode'] == 'TR':
+                syms = doAlign(syms)
+            syms = [s * w/100 for s, w in zip(syms, d.values())]
+            res = pd.DataFrame(syms).sum()
+
+        if getArgs['rebal'] == 'day':
+            args = getArgs.copy() 
+            args["trim"] = True
+            syms = get(list(d.keys()), **args)
+            syms = dict(zip(d.keys(), syms))
+            df = pd.DataFrame(logret(syms[k], fillna=True)*v/100 for k,v in d.items()).T
+            df = df.dropna() # should we use any or all ?
+            res = i_logret(df.sum(axis=1))
+
     res.name = name
     return res
 
@@ -1263,10 +1329,42 @@ def getNtr(s, getArgs):
     ntr = (pr * r).dropna() # mul the price with the ratio - this is the dividend reinvestment
     #ntr = wrap(ntr, s.name + " NTR")
     ntr.name = s.name
-    return unwrap(ntr)
+    return ntr
 
+def get_intr(s, getArgs):
+    mode = getArgs.get("mode", None)
+    reget = getArgs.get("reget", None)
+    getArgs["reget"] = True
+    
+    getArgs["mode"] = "PR"
+    pr = get(s, **getArgs)
+    
+    getArgs["mode"] = "divs"
+    dv = get(s, **getArgs)
+    
+    getArgs["mode"] = mode
+    getArgs["reget"] = reget
 
-def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode="TR", secondary="Y", interpolate=True, despike=False, trim=False, reget=None, start=None, freq=None):
+    if is_series(s):
+        start = s.index[0]
+        pr = pr[start:]
+        divs = divs[start:]
+    
+#     dv = divs(s)
+#     pr = price(s)
+    
+    tax = 0.25
+    dv = dv * (1-tax)   # strip divs from their taxes
+    dv = dv.reindex(pr.index).fillna(0)
+    res = dv.cumsum() + pr
+    res.name = get_name(s)
+    return res
+
+def is_symbol(s):
+    return type(s).__name__ == "Symbol"
+    # isinstance(s, Symbol) - this doesn't work, as the Symbol class seems to have seperate instances in the python and Jupyter scopes
+
+def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, reget=None, start=None, freq=None, rebal='none'):
 
     # tmp
     # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
@@ -1287,6 +1385,7 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     getArgs["reget"] = reget
     getArgs["start"] = start
     getArgs["freq"] = freq
+    getArgs["rebal"] = rebal
     
     if isinstance(symbol, tuple) or isinstance(symbol, map) or isinstance(symbol, types.GeneratorType):
         symbol = list(symbol)
@@ -1311,7 +1410,15 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     #if isinstance(symbol, tuple) and len(symbol) == 2:
     #    symbol, _ = symbol
     
-    if isinstance(symbol, Wrapper) or isinstance(symbol, pd.Series):
+    if is_series(symbol):
+        # these are regression series, we can't get them from sources (yet)
+        if symbol.name and symbol.name.startswith("~"):
+            reget = False
+
+        if mode and (reget is None) and is_symbol(symbol.name) and symbol.name.mode != mode:
+            #print("auto reget")
+            reget = True
+
         if not reget:
             if freq:
                 symbol = symbol.asfreq(freq)
@@ -1320,27 +1427,35 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     
     if "ignoredAssets" in globals() and ignoredAssets and symbol in ignoredAssets:
         return wrap(pd.Series(), "<empty>")
-    
+
     # special handing for composite portfolios
     port = parse_portfolio_def(symbol)
-    if port:
-        return get_port(port, symbol, getArgs)
     
+    mode = mode or "TR"
     symbol = toSymbol(symbol, source, mode)
 
-    if mode == "NTR":
-        s = getNtr(symbol, getArgs)
+    if port:
+        s = get_port(port, symbol, getArgs)
     else:
-        if adj == False:
-            splitAdj = False
-            divAdj = False
-        s = getFrom(symbol, GetConf(splitAdj, divAdj, cache, mode, source, secondary))
+        if mode == "NTR":
+            s = getNtr(symbol, getArgs)
+        elif mode == "ITR":
+            s = get_intr(symbol, getArgs)
+        else:
+            if adj == False:
+                splitAdj = False
+                divAdj = False
+            s = getFrom(symbol, GetConf(splitAdj, divAdj, cache, mode, source, secondary))
 
     s.name = symbol
-    s = s[s>0] # clean up broken yahoo data, etc ..
+    if np.any(s != 0):
+        s = s[s != 0] # clean up broken yahoo data, etc ..
     
     if despike:
         s = globals()["despike"](s)
+
+    if trim:
+        s = doTrim([s], trim=trim)[0]
 
     if interpolate and s.shape[0] > 0 and mode != "divs" and mode != "raw":
         s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
@@ -1349,7 +1464,7 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     if freq:
         s = s.asfreq(freq)
     
-    return wrap(s, symbol)
+    return s
 
 
 # In[ ]:
@@ -1419,7 +1534,7 @@ def createHorizontalLine(yval):
         }
     return shape
     
-def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, annotations=False, xlabel=None, ylabel=None, show_zero_point=False):
+def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, annotations=False, xlabel=None, ylabel=None, show_zero_point=False, same_ratio=False):
     if not ipy:
         warn("not plotting, no iPython env")
         return
@@ -1438,12 +1553,12 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
         # series
         if isinstance(val, Wrapper) or isinstance(val, pd.Series):
             val = unwrap(val)
-            text = val.name
+            text = get_pretty_name(val.name)
             try:
-                text = val.names
+                text = lmap(get_pretty_name ,val.names)
             except:
                 pass
-            data.append(go.Scatter(x=val.index, y=val, name=val.name, text=text, mode=mode, textposition='top center'))
+            data.append(go.Scatter(x=val.index, y=val, name=val.name, text=text, mode=mode, textposition='middle right'))
         # vertical date line
         elif isinstance(val, datetime.datetime):
             shapes.append(createVerticalLine(val))
@@ -1483,10 +1598,14 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
         legendArgs = {}
     yaxisScale = "log" if log else None
     rangemode = "tozero" if show_zero_point else "normal"
+    yaxis = dict(rangemode=rangemode, type=yaxisScale, autorange=True, title=ylabel)
+    if same_ratio:
+        yaxis['scaleanchor'] = 'x'
+        yaxis['scaleratio'] = 1
     layout = go.Layout(legend=legendArgs, 
                        showlegend=legend, 
                        margin=margin, 
-                       yaxis=dict(rangemode=rangemode, type=yaxisScale, autorange=True, title=ylabel),  # titlefont=dict(size=18)
+                       yaxis=yaxis,  # titlefont=dict(size=18)
                        xaxis=dict(rangemode=rangemode, title=xlabel), # titlefont=dict(size=18) 
                        shapes=shapes, 
                        title=title,
@@ -1495,16 +1614,16 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
     py.iplot(fig)
 
 # simple X, Y scatter
-def plot_scatter_xy(x, y, names=None, title=None, xlabel=None, ylabel=None, show_zero_point=False):
+def plot_scatter_xy(x, y, names=None, title=None, xlabel=None, ylabel=None, show_zero_point=False, same_ratio=False):
     ser = pd.Series(y, x)
     if names:
         ser.names = names
-    plot(ser, lines=False, markers=True, annotations=True, legend=False, log=False, title=title, xlabel=xlabel, ylabel=ylabel, show_zero_point=show_zero_point)
+    plot(ser, lines=False, markers=True, annotations=True, legend=False, log=False, title=title, xlabel=xlabel, ylabel=ylabel, show_zero_point=show_zero_point, same_ratio=same_ratio)
 
 # this also supports line-series and single points
 # each point must be a series with length=1
-def plot_scatter(*lst, title=None, xlabel=None, ylabel=None, show_zero_point=False):
-    plot(*lst, lines=True, markers=True, annotations=True, legend=False, log=False, title=title, xlabel=xlabel, ylabel=ylabel, show_zero_point=show_zero_point)
+def plot_scatter(*lst, title=None, xlabel=None, ylabel=None, show_zero_point=False, same_ratio=False):
+    plot(*lst, lines=True, markers=True, annotations=True, legend=False, log=False, title=title, xlabel=xlabel, ylabel=ylabel, show_zero_point=show_zero_point, same_ratio=same_ratio)
 
 # show a stacked area chart normalized to 100% of multiple time series
 def plotly_area(df, title=None):
@@ -1594,7 +1713,7 @@ def is_series(x):
 trimmed_messages = set()
 def doTrim(data, silent=False, trim=True):
     data = _doTrim(data, 'start', silent=silent, trim=trim)
-    data = _doTrim(data, 'end', silent=silent, trim=trim)
+    data = _doTrim(data, 'end', silent=silent, trim=not not trim)
     return data
 
 def _doTrim(data, pos, silent=False, trim=True):
@@ -1618,7 +1737,7 @@ def _doTrim(data, pos, silent=False, trim=True):
     elif is_series(trim):
         date = trim.index[0]
         max_fault = trim.name
-    elif isinstance(trim, pd.Timestamp):
+    elif isinstance(trim, pd.Timestamp) or isinstance(trim, datetime.datetime):
         date = trim
         max_fault = "custom"
     else:
@@ -1790,6 +1909,9 @@ def show_scatter(xs, ys, setlim=True, lines=False, color=None, annotations=None,
                 txt = globals()["fixtext"](txt)
             plt.annotate(txt, (xs[i], ys[i]), fontsize=14)
 
+def show_modes(s):
+    show(modes(s))
+
 def show_modes_comp(a, b):
     show([r(x, y) for x,y in zip(modes(a), modes(b))], 1)
 
@@ -1945,6 +2067,28 @@ def show_risk_yield_types(*lst, ret_func=None, types=['true', 'normal', 'rolling
     title = title or f"Risk - {mode} Yield Types"
     plot_scatter(*res, title=title, xlabel="ulcer", ylabel="current yield", show_zero_point=True)
 
+def show_risk_itr_pr(*lst, title=None):
+    def get_data(lst, type):
+        yld = [get_curr_yield(s, type=type) for s in lst]
+        rsk = lmap(ulcer, lst)
+        return pd.Series(yld, rsk)
+
+    lst = get(lst, mode=mode, trim=True, reget=True, despike=True)
+    res = []
+    for s in lst:
+        pr = get(s, mode="PR")
+        itr = get(s, mode="ITR")
+        pr_ulcer = ulcer(pr)
+        x = [pr_ulcer, pr_ulcer]
+        y = [cagr(pr), cagr(itr)]
+        ser = pd.Series(y, index=x)
+        ser.name = s.name
+        ser.names = [s.name, '']
+        res.append(ser)
+    
+    title = title or f"PR Risk - ITR Return"
+    plot_scatter(*res, title=title, xlabel="ulcer", ylabel="cagr", show_zero_point=True)
+
 
 def show_risk_yield(*lst, title="Risk - NORMAL Yield TR-NTR"):
     show_risk_return_modes(*lst, ret_func=get_curr_yield_normal, modes=['TR', 'NTR'], title=title)
@@ -2026,7 +2170,6 @@ def show_rolling_beta(target, sources, window=None, rsq=True, betaSum=False, pva
     
     show(res, ta=False)
 
-        
 def mix(s1, s2, n=10, do_get=False, **getArgs):
     part = 100/n
     res = []
@@ -2351,12 +2494,16 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
     
     _pred = finalize(res)
     pred = _pred
-    if False:
+    if True:
         #sources_dict = {s.name: s for s in sources}
         #d = Portfolio([(s, ser[getName(s)]*100) for s in orig_sources])
         d = (ser*100).to_dict()
-        pred = name(get(d), target.name + " - fit")
-        pred = pred / pred[_pred.index[0]] * _pred[0]
+        if True:
+            pred = name(get(d), target.name + " - fit")
+            pred = pred / pred[_pred.index[0]] * _pred[0]
+            port = dict_to_port_name(d, drop_zero=True, drop_100=True, use_sym_name=True)
+            pred_str = f"{port} = {target.name} - fit"
+
         #    pred, _pred = doAlign([pred, _pred])
 
     if show_res:
@@ -2368,10 +2515,10 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
     
     if return_pred:
         print(ser)
-        return pred
+        return pred_str
 
-    if res_pred:
-        res["pred"] = pred
+    #if res_pred:
+    res["pred"] = pred_str
         
     if return_res:
         res["ser"] = ser
@@ -2810,6 +2957,7 @@ if not "fixed_globals_once" in globals():
     cjb = 'VWEHX' # JNK, HYG # junk bonds
 #    junk = cjb # legacy
     scjb = 'HYS' # short-term-corp-junk-bonds
+    aggg_idx = "LEGATRUU;IND@B" # AGGG.L Global bonds unhedged
 
     # ==== CASH ====
     rfr = 'SHV' # BIL # risk free return (1-3 month t-bills)
@@ -3034,13 +3182,36 @@ interestingCurrencies = ["USDEUR", "USDCAD", "USDJPY", "USDAUD", "USDJPY", "USDC
 # In[ ]:
 
 
+# def divs(symbolName, period=None, fill=False):
+#     if isinstance(symbolName, tuple) and period is None:
+#         symbolName, period = symbolName
+#     if isinstance(symbolName, Wrapper) or isinstance(symbolName, pd.Series):
+#         sym = symbolName
+#         symbolName = symbolName.name
+#     if symbolName.startswith("~"):
+#         divs = sym[-1:0] # we just want an empty series with DatetimeIndex
+#         #divs = pd.Series(index=pd.DatetimeIndex(freq="D"))
+#         divs.name = symbolName
+#     else:
+#         divs = get(symbolName, mode="divs")
+#         divs = divs[divs>0]
+#     if period:
+#         divs = wrap(divs.rolling(period).sum())
+#     if fill:
+#         price = get(symbolName)
+#         divs = divs.reindex(price.index.union(divs.index), fill_value=0)
+#     divs.name = divs.name + " divs"
+#     return divs
+
 def divs(symbolName, period=None, fill=False):
-    if isinstance(symbolName, tuple) and period is None:
-        symbolName, period = symbolName
-    if isinstance(symbolName, Wrapper) or isinstance(symbolName, pd.Series):
-        symbolName = symbolName.name
-    divs = get(symbolName, mode="divs")
-    divs = divs[divs>0]
+    name = get_name(symbolName)
+    if name.startswith("~"):
+        divs = sym[-1:0] # we just want an empty series with DatetimeIndex
+        #divs = pd.Series(index=pd.DatetimeIndex(freq="D"))
+        divs.name = name
+    else:
+        divs = get(symbolName, mode="divs", reget=True)
+        divs = divs[divs>0]
     if period:
         divs = wrap(divs.rolling(period).sum())
     if fill:
@@ -3050,6 +3221,8 @@ def divs(symbolName, period=None, fill=False):
     return divs
 
 def get_divs_interval(divs):
+    divs = divs.resample("M").sum()
+    divs = divs[divs>0]
     monthds_diff = (divs.index.to_series().diff().dt.days/30).dropna().apply(lambda x: int(round(x)))
     monthds_diff = monthds_diff[-5:].median()
     return monthds_diff
@@ -3152,13 +3325,15 @@ def show_cum_income(*all):
 
 def analyze_assets(*all, start=None, despike=True):
     all = get(all, start=start, despike=despike) # note we don't trim
-    
+
     # risk-return
     bases = [ mix(lc, gb, do_get=False), mix(i_ac, gb, do_get=False)]
     lst = get(all + bases, mode="TR", reget=True)
     show_risk_return(*lst, title="TR Risk-Return")
     lst = get(all + bases, mode="NTR", reget=True)
     show_risk_return(*lst, title="NTR Risk-Return")
+    lst = get(all + bases, mode="ITR", reget=True)
+    show_risk_return(*lst, title="ITR Risk-Return")
     lst = get(all + bases, mode="PR", reget=True)
     show_risk_return(*lst, title="PR Risk-Return")
     show_risk_return_modes(*all)
@@ -3221,13 +3396,17 @@ def filterByStart(lst, start=None):
         return lst
     if isinstance(start, pd.Series) or isinstance(start, Wrapper):
         res = [s for s in lst if s.index[0] <= start.index[0]]
+        dropped = [s for s in lst if s.index[0] > start.index[0]]
     elif isinstance(start, int):
         res = [s for s in lst if s.index[0].year < start]
+        dropped = [s for s in lst if s.index[0].year >= start]
     elif isinstance(start, pd.Timestamp):
         res = [s for s in lst if s.index[0] <= start]
+        dropped = [s for s in lst if s.index[0] > start]
     else:
         raise Exception(f"not supported type {type(start)}")
-    dropped = set(lst) - set(res)
+    
+    #dropped = set(lst) - set(res)
     if len(dropped) > 0:
         dropped = [s.name for s in dropped]
         print(f"dropped: {', '.join(dropped)}")
@@ -3240,10 +3419,10 @@ def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True
     start = None
     if is_series(sym):
         start = sym.index[0]
-    price = get(sym, mode="PR", reget=True)
+    prc = price(sym)
     if start:
-        price = price[start:]
-    units = value / price[0]
+        prc = prc[start:]
+    units = value / prc[0]
     div = divs(sym)
     if start:
         div = div[start:]
@@ -3252,8 +3431,9 @@ def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True
         income *= 0.75
     if per_month:
         income = income.resample("M").sum()
-        interval = get_divs_interval(div)
-        income = ma(income, interval)
+        income = income[income > 0]
+        #interval = get_divs_interval(div)
+        #income = ma(income, interval)
     else:
         income = income.resample("Y").sum()/12
     #income = income.replace(0, np.nan).interpolate()
@@ -3263,7 +3443,7 @@ def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True
         income = convertSeries(income, "USD", "ILS")
     if smooth:
         income = ma(income, smooth)
-    return name(income, price.name)
+    return name(income, prc.name)
 
 def get_cum_income(sym):
     income = get_income(sym, smooth=0)
@@ -3288,7 +3468,7 @@ def get_inflation(smooth=None):
 def get_real_yield(s, type=None):
     yld = get_yield(s, type=type)
     inf = get_inflation(365*7)
-    return name(yld - inf, yld.name + " real").dropna()
+    return name(yld - inf, f"{yld.name} real").dropna()
 
 def roi(s,value=100000):
     income = get_income(s, value=value, nis=False, per_month=True)
@@ -3301,11 +3481,13 @@ def cum_cagr(s):
     val = s / s[0]
     return (np.power(val, 1/years)-1)*100
     
-def modes(s):
-    res = [get(s, mode="TR", reget=True), get(s, mode="NTR", reget=True), get(s, mode="PR", reget=True)]
-    res[0].name += "-TR"
-    res[1].name += "-NTR"
-    res[2].name += "-PR"
+def modes(s, **get_args):
+    res = [get(s, mode="TR", **get_args), get(s, mode="ITR", **get_args), get(s, mode="NTR", **get_args), get(s, mode="PR", **get_args)]
+    # we can't rename exisitng series, it messes up future gets
+    # res[0].name += "-TR"
+    # res[1].name += "-ITR"
+    # res[2].name += "-NTR"
+    # res[3].name += "-PR"
     return res
 
 # ## Generic Utils
