@@ -1364,7 +1364,7 @@ def is_symbol(s):
     return type(s).__name__ == "Symbol"
     # isinstance(s, Symbol) - this doesn't work, as the Symbol class seems to have seperate instances in the python and Jupyter scopes
 
-def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, reget=None, start=None, freq=None, rebal='none'):
+def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, reget=None, start=None, freq=None, rebal='none', silent=False):
 
     # tmp
     # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
@@ -1386,6 +1386,7 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     getArgs["start"] = start
     getArgs["freq"] = freq
     getArgs["rebal"] = rebal
+    getArgs["silent"] = silent
     
     if isinstance(symbol, tuple) or isinstance(symbol, map) or isinstance(symbol, types.GeneratorType):
         symbol = list(symbol)
@@ -1394,9 +1395,9 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
         #if reget is None and trim == True:
         #    getArgs["reget"] = True # this is a sensible default behaviour
         lst = [get(s, **getArgs) for s in lst]
-        if start:
+        if not start is None:
             lst = filterByStart(lst, start)
-        if trim:
+        if not trim is False:
             lst = doTrim(lst, trim=trim)
         return lst
     
@@ -1454,8 +1455,12 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     if despike:
         s = globals()["despike"](s)
 
-    if trim:
-        s = doTrim([s], trim=trim)[0]
+    if not trim is False:
+        trimmed = doTrim([s], trim=trim, silent=True)
+        if len(trimmed) == 0:
+            s = s[-1:0] # empty series
+        else:
+            s = trimmed[0]
 
     if interpolate and s.shape[0] > 0 and mode != "divs" and mode != "raw":
         s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
@@ -1713,10 +1718,13 @@ def is_series(x):
 trimmed_messages = set()
 def doTrim(data, silent=False, trim=True):
     data = _doTrim(data, 'start', silent=silent, trim=trim)
-    data = _doTrim(data, 'end', silent=silent, trim=not not trim)
+    data = _doTrim(data, 'end', silent=silent, trim=not trim is False)
     return data
 
 def _doTrim(data, pos, silent=False, trim=True):
+    if trim is False or trim is None:
+        return data
+
     # we should first dropna, as there is no point in trimming to a common date
     # where some of the series starts with nan's
     data = [s.dropna() if is_series(s) else s for s in data]
@@ -1729,7 +1737,7 @@ def _doTrim(data, pos, silent=False, trim=True):
         r_agg = max
     
     # find common date
-    if trim == True:
+    if trim is True:
         if silent:
             date = getCommonDate(data, pos, agg=agg)
         else:
@@ -1737,9 +1745,12 @@ def _doTrim(data, pos, silent=False, trim=True):
     elif is_series(trim):
         date = trim.index[0]
         max_fault = trim.name
-    elif isinstance(trim, pd.Timestamp) or isinstance(trim, datetime.datetime):
+    elif isinstance(trim, pd.Timestamp) or isinstance(trim, datetime.datetime) or isinstance(trim, datetime.date):
         date = trim
-        max_fault = "custom"
+        max_fault = "date"
+    elif isinstance(trim, int):
+        date = datetime.datetime(trim, 1, 1)
+        max_fault = "year"
     else:
         raise Exception(f"unsupported trim type {type(trim)}")
         
@@ -3232,7 +3243,7 @@ def show_yields(sym):
     true_yield = name(get_yield(sym, type='true'), n + " true")
     normal_yield = name(get_yield(sym, type='normal'), n + " normal")
     rolling_yield = name(get_yield(sym, type='rolling'), n + " rolling")
-    show(true_yield, normal_yield, rolling_yield, ta=False, log=False)
+    show(true_yield, normal_yield, rolling_yield, 0, ta=False, log=False)
 
 def get_yield_true(sym):
     return get_yield(sym, type='true')
@@ -3391,20 +3402,22 @@ def despike(s, std=8, window=30, shift=10):
     s = _despike(s[::-1], std=std, window=window, shift=shift)[::-1]
     return s
 
+def get_date(x):
+    if is_series(x):
+        return x.index[0]
+    elif isinstance(x, int):
+        return datetime.datetime(x, 1, 1)
+    elif isinstance(x, pd.Timestamp) or isinstance(x, datetime.datetime) or isinstance(x, datetime.date):
+        return x
+    raise Exception(f"not supported date type {type(x)}")
+
+
 def filterByStart(lst, start=None):
     if start is None:
         return lst
-    if isinstance(start, pd.Series) or isinstance(start, Wrapper):
-        res = [s for s in lst if s.index[0] <= start.index[0]]
-        dropped = [s for s in lst if s.index[0] > start.index[0]]
-    elif isinstance(start, int):
-        res = [s for s in lst if s.index[0].year < start]
-        dropped = [s for s in lst if s.index[0].year >= start]
-    elif isinstance(start, pd.Timestamp):
-        res = [s for s in lst if s.index[0] <= start]
-        dropped = [s for s in lst if s.index[0] > start]
-    else:
-        raise Exception(f"not supported type {type(start)}")
+    start = get_date(start)
+    res = [s for s in lst if s.index[0] <= start]
+    dropped = [s for s in lst if s.index[0] > start]
     
     #dropped = set(lst) - set(res)
     if len(dropped) > 0:
@@ -3420,18 +3433,19 @@ def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True
     if is_series(sym):
         start = sym.index[0]
     prc = price(sym)
-    if start:
+    if not start is None:
         prc = prc[start:]
     units = value / prc[0]
     div = divs(sym)
-    if start:
+    if not start is None:
         div = div[start:]
     income = div * units
     if net:
         income *= 0.75
     if per_month:
         income = income.resample("M").sum()
-        income = income[income > 0]
+        #income = income[income > 0]
+        
         #interval = get_divs_interval(div)
         #income = ma(income, interval)
     else:
@@ -3482,11 +3496,11 @@ def cum_cagr(s):
     return (np.power(val, 1/years)-1)*100
     
 def modes(s, **get_args):
-    res = [get(s, mode="TR", **get_args), get(s, mode="ITR", **get_args), get(s, mode="NTR", **get_args), get(s, mode="PR", **get_args)]
+    res = [get(s, mode="TR", **get_args), get(s, mode="NTR", **get_args), get(s, mode="ITR", **get_args), get(s, mode="PR", **get_args)]
     # we can't rename exisitng series, it messes up future gets
     # res[0].name += "-TR"
-    # res[1].name += "-ITR"
-    # res[2].name += "-NTR"
+    # res[1].name += "-NTR"
+    # res[2].name += "-ITR"
     # res[3].name += "-PR"
     return res
 
