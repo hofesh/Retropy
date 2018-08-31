@@ -1820,7 +1820,7 @@ def doAlign(data):
     return newArr
 
 def doClean(data):
-    return [s.dropna() if isinstance(s, Wrapper) else s for s in data]
+    return [s.dropna() if is_series(s) else s for s in data]
 
 def try_parse_date(s, format):
     try:
@@ -3129,6 +3129,7 @@ oilBrentQ,
 assets_core = [
     # equities
     ac,
+    i_ac,
     i_dev,
     em_ac,
     # reit
@@ -3445,7 +3446,7 @@ def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True
     if per_month:
         income = income.resample("M").sum()
         #income = income[income > 0]
-        
+
         #interval = get_divs_interval(div)
         #income = ma(income, interval)
     else:
