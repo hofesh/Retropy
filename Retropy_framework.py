@@ -130,6 +130,9 @@ class Portfolio():
 
 class Symbol(str):
     def __init__(self, fullname):
+        if is_symbol(fullname):
+            raise Exception("should not set symbol name as symbol instance")
+
         self.fullname = fullname
 
         parts = fullname.split("=")
@@ -162,9 +165,22 @@ class Symbol(str):
     @property
     def pretty_name(self):
         if not self.nick is None:
-            return self.nick
+            res = self.nick
             #return f"{self.fullname_nonick} = {self.nick}"
-        return self.fullname
+        else:
+            res = self.fullname
+        if hasattr(self, "mode") and self.mode:
+            res = f"{res} {self.mode}"
+        return res
+
+    @property
+    def pretty_name_no_mode(self):
+        if not self.nick is None:
+            res = self.nick
+            #return f"{self.fullname_nonick} = {self.nick}"
+        else:
+            res = self.fullname
+        return res
         
     def __str__(self):
         return self.fullname # temp, to resolve the get, reget issue with named symbols
@@ -259,25 +275,29 @@ def convertToday(value, fromCur, toCur):
 def get_pretty_name(s):
     return get_name(s, use_sym_name=False)
 
-def get_name(s, use_sym_name=False):
+def get_pretty_name_no_mode(s):
+    return get_name(s, use_sym_name=False, nomode=True)
+
+def get_name(s, use_sym_name=False, nomode=False):
     if s is None:
         return ""
     if is_series(s):
         s = s.name
-    if isinstance(s, str):
+    if not is_symbol(s):
         s = Symbol(s)
-    if not isinstance(s, Symbol):
-        raise Exception(f"Can't get name of type {s}")
     if use_sym_name:
         return s.fullname_nonick
     else:
-        return s.pretty_name
+        if nomode:
+            return s.pretty_name_no_mode
+        else:
+            return s.pretty_name
 getName = get_name
 
 def toSymbol(sym, source, mode):
     if isinstance(sym, dict):
         sym = dict_to_port_name(sym, use_sym_name=True)
-    if isinstance(sym, Symbol):
+    if is_symbol(sym):
         res = Symbol(sym.fullname)
         res.mode = mode or sym.mode
         return res
@@ -485,9 +505,14 @@ class QuandlDataSource(DataSource):
         return quandl.get(symbol.name)
 
     def process(self, symbol, df, conf):
-        if "Close" in df.columns:
-            return df["Close"]
-        return df.iloc[:, 0]
+        if conf.mode == "TR" or conf.mode == "PR":
+            if "Close" in df.columns:
+                return df["Close"]
+            return df.iloc[:, 0]
+        elif conf.mode == "divs":
+            return df.iloc[:, 0][0:0] # empty
+        else:
+            raise Exception("Unsupported mode [" + conf.mode + "] for QuandlDataSource")
 
     
 class GoogleDataSource(DataSource):
@@ -1105,8 +1130,18 @@ def unwrap(s):
 
 def name(s, n):
     if is_series(s):
-        s.name = n
+        if is_symbol(n):
+            s.name = n
+        elif is_symbol(s.name):
+            sym = Symbol(s.name.fullname_nonick + "=" + n)
+            sym.mode = s.name.mode
+            s.name = sym
+        else:
+            s.name = n
     return s
+    
+def rename(s, n):
+    return name(s.copy(), n)
     
 data_sources = {
     
@@ -1150,7 +1185,7 @@ def getFrom(symbol, conf):
 
 def format_filename(s):
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
-    filename = ''.join(c for c in s if c in valid_chars)
+    filename = ''.join(c if c in valid_chars else '_' for c in s )
     filename = filename.replace(' ','_')
     return filename
     
@@ -1246,12 +1281,18 @@ def get_port(d, name, getArgs):
         d = res
     if not isinstance(d, dict):
         raise Exception("Portfolio definition must be str or dict, was: " + type(d))        
-    if isinstance(name, dict):
-        name = dict_to_port_name(d)
-    if isinstance(name, str):
-        parts = name.split("=")
-        if len(parts) == 2:
-            name = parts[1].strip()
+
+    if is_symbol(name):
+        pass
+    elif isinstance(name, dict):
+        name = Symbol(dict_to_port_name(d))
+    elif isinstance(name, str):
+        name = Symbol(name)
+    else:
+        raise Exception("a proper portfolio name must be specified")
+        # parts = name.split("=")
+        # if len(parts) == 2:
+        #     name = parts[1].strip()
 
     if getArgs['mode'] == 'divs':
         #raise Exception("port divs not supported")
@@ -1264,13 +1305,35 @@ def get_port(d, name, getArgs):
         res = df.sum(axis=1)
     else:
 
+        # if getArgs['rebal'] == 'none':
+        #     syms = get(list(d.keys()), **getArgs)
+        #     syms = doTrim(syms)
+        #     if getArgs['mode'] != 'PR':
+        #         syms = doAlign(syms)
+        #     syms = [s * w/100 for s, w in zip(syms, d.values())]
+        #     res = pd.DataFrame(syms).sum()
+
         if getArgs['rebal'] == 'none':
             syms = get(list(d.keys()), **getArgs)
             syms = doTrim(syms)
-            if getArgs['mode'] == 'TR':
-                syms = doAlign(syms)
-            syms = [s * w/100 for s, w in zip(syms, d.values())]
-            res = pd.DataFrame(syms).sum()
+            if getArgs['mode'] == 'PR':
+                base = [s[0] * w for s, w in zip(syms, d.values())]
+                base = np.sum(base) / np.sum(list(d.values()))
+            else:
+                base = 1
+            syms = doAlign(syms)
+            syms = [(s-1) * w/100 for s, w in zip(syms, d.values())]
+            res = pd.DataFrame(syms).sum() + 1
+            res = res * base
+
+
+            # if getArgs['mode'] == 'PR':
+            #     syms = [s * w/100 for s, w in zip(syms, d.values())]
+            #     res = pd.DataFrame(syms).sum() / np.sum(list(d.values()))
+            # else:
+            #     syms = doAlign(syms)
+            #     syms = [(s-1) * w/100 for s, w in zip(syms, d.values())]
+            #     res = pd.DataFrame(syms).sum() + 1
 
         if getArgs['rebal'] == 'day':
             args = getArgs.copy() 
@@ -1333,8 +1396,6 @@ def getNtr(s, getArgs):
 
 def get_intr(s, getArgs):
     mode = getArgs.get("mode", None)
-    reget = getArgs.get("reget", None)
-    getArgs["reget"] = True
     
     getArgs["mode"] = "PR"
     pr = get(s, **getArgs)
@@ -1343,7 +1404,6 @@ def get_intr(s, getArgs):
     dv = get(s, **getArgs)
     
     getArgs["mode"] = mode
-    getArgs["reget"] = reget
 
     if is_series(s):
         start = s.index[0]
@@ -1364,7 +1424,7 @@ def is_symbol(s):
     return type(s).__name__ == "Symbol"
     # isinstance(s, Symbol) - this doesn't work, as the Symbol class seems to have seperate instances in the python and Jupyter scopes
 
-def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, reget=None, start=None, freq=None, rebal='none', silent=False):
+def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=True, trim=False, untrim=False, remode=True, start=None, freq=None, rebal='none', silent=False):
 
     # tmp
     # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
@@ -1382,11 +1442,16 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     getArgs["interpolate"] = interpolate
     getArgs["despike"] = despike
     getArgs["trim"] = trim
-    getArgs["reget"] = reget
+    #getArgs["reget"] = reget
+    getArgs["untrim"] = untrim
+    getArgs["remode"] = remode
     getArgs["start"] = start
     getArgs["freq"] = freq
     getArgs["rebal"] = rebal
     getArgs["silent"] = silent
+
+    if symbol is None:
+        return None
     
     if isinstance(symbol, tuple) or isinstance(symbol, map) or isinstance(symbol, types.GeneratorType):
         symbol = list(symbol)
@@ -1412,19 +1477,42 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     #    symbol, _ = symbol
     
     if is_series(symbol):
+        reget = None
+        
         # these are regression series, we can't get them from sources (yet)
         if symbol.name and symbol.name.startswith("~"):
             reget = False
 
-        if mode and (reget is None) and is_symbol(symbol.name) and symbol.name.mode != mode:
-            #print("auto reget")
-            reget = True
+        if reget != False:
+            
+            # if a mode has changed, reget (and if not, keep source mode)
+            if is_symbol(symbol.name) and symbol.name.mode != mode:
+                if mode is None:
+                    mode = symbol.name.mode # just in case we do reget (say if trim=True), keep the symbol mode
+                elif remode:
+                    reget = True
+
+            # if any trim is requested, reget
+            # why? trim alone should not imply a reget
+            # if not trim is False:
+            #     reget = True
+
+            # this is to un-trim a trimmed series
+            if untrim:
+                reget = True
+
+            # this is to keep an existing trim, if we reget (say due to remode)
+            if not untrim and trim is False:
+                trim = symbol
 
         if not reget:
             if freq:
                 symbol = symbol.asfreq(freq)
             return symbol
         symbol = symbol.name
+
+    if symbol == "":
+        raise Exception("attemping to get an empty string as symbol name")
     
     if "ignoredAssets" in globals() and ignoredAssets and symbol in ignoredAssets:
         return wrap(pd.Series(), "<empty>")
@@ -1472,33 +1560,6 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     return s
 
 
-# In[ ]:
-
-
-#     def __getattribute__(self,name):
-#         s = object.__getattribute__(self, "s")
-#         if name == "s":
-#             return s
-        
-#         attr = s.__getattribute__(name)
-        
-#         if hasattr(attr, '__call__'):
-#             def newfunc(*args, **kwargs):
-#                 result = attr(*args, **kwargs)
-#                 if type(result) is pd.Series:
-#                     result = Wrapper(result)
-#                 return result
-#             return newfunc
-        
-#         if type(attr) is pd.Series:
-#             attr = Wrapper(attr)
-#         return attr
-    
-
-
-# In[ ]:
-
-
 # plotting
 
 from plotly.graph_objs import *
@@ -1538,11 +1599,11 @@ def createHorizontalLine(yval):
             }
         }
     return shape
-    
+
+def is_named_number(val):
+    return isinstance(val, tuple) and len(val) == 2 and isinstance(val[0], numbers.Real) and isinstance(val[1], str)    
+
 def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, annotations=False, xlabel=None, ylabel=None, show_zero_point=False, same_ratio=False):
-    if not ipy:
-        warn("not plotting, no iPython env")
-        return
     data = []
     shapes = []
     mode = ''
@@ -1554,16 +1615,25 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
         mode = 'markers'
     if annotations:
         mode += '+text'
+    hlines = []
+    min_date = None
     for val in arr:
         # series
-        if isinstance(val, Wrapper) or isinstance(val, pd.Series):
+        if is_series(val):
             val = unwrap(val)
-            text = get_pretty_name(val.name)
+            name = get_pretty_name(val.name)
+            text = name
             try:
                 text = lmap(get_pretty_name ,val.names)
             except:
                 pass
-            data.append(go.Scatter(x=val.index, y=val, name=val.name, text=text, mode=mode, textposition='middle right'))
+            data.append(go.Scatter(x=val.index, y=val, name=name, text=text, mode=mode, textposition='middle right'))
+            start_date = _start(val)
+            if start_date:
+                if min_date is None:
+                    min_date = start_date
+                elif start_date:
+                    min_date = min(min_date, start_date)
         # vertical date line
         elif isinstance(val, datetime.datetime):
             shapes.append(createVerticalLine(val))
@@ -1575,12 +1645,21 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
             shapes.append(createHorizontalLine(val))
             if val == 0:
                 log = False
+        elif is_named_number(val):
+            hlines.append(val)
         else:
             raise Exception("unsupported value type: " + str(type(val)))
     
+    for val, txt in hlines:
+        shapes.append(createHorizontalLine(val))
+        data.append(go.Scatter(x=[min_date], y=[val], text=txt, mode='text', textposition='top right', showlegend=False))
+        if val == 0:
+            log = False
+
     for d in data:
         d = d.y
-        d = unwrap(d)
+        if isinstance(d, tuple): # for named numbers
+            continue
         if np.any(d <= 0):
             log = False
             
@@ -1595,8 +1674,8 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
     
     #bgcolor='#FFFFFFBB',bordercolor='#888888',borderwidth=1,
     if legend:
-        legendArgs=dict(x=0,y=1,traceorder='normal',
-            bgcolor='rgb(255,255,255,187)',bordercolor='#888888',borderwidth=1,
+        legendArgs=dict(x=0,y=-0.06,traceorder='normal', orientation='h', yanchor='top',
+            bgcolor='rgb(255,255,255,50)',bordercolor='#888888',borderwidth=1,
             font=dict(family='sans-serif',size=12,color='#000'),
         )    
     else:
@@ -1616,6 +1695,9 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
                        title=title,
                        hovermode = 'closest')
     fig = go.Figure(data=data, layout=layout)
+    if not ipy:
+        warn("not plotting, no iPython env")
+        return
     py.iplot(fig)
 
 # simple X, Y scatter
@@ -1679,7 +1761,9 @@ def plotly_area(df, title=None):
 # data processing
 
 def _start(s):
-    return s.index[0]
+    if s.shape[0] > 0:
+        return s.index[0]
+    return None
 
 def _end(s):
     return s.index[-1]
@@ -1776,6 +1860,8 @@ def _doTrim(data, pos, silent=False, trim=True):
             else:
                 s = [x[:date] for x in s]
             s = [x for x in s if x.shape[0] > 0]
+        elif isinstance(s, numbers.Real):
+            pass
         else:
             warn(f"not trimming type {type(s)}, {s}")
         newArr.append(s)
@@ -1792,10 +1878,19 @@ def _doTrim(data, pos, silent=False, trim=True):
     return newArr
 
 def trimBy(trimmed, by):
+    not_list = False
+    if not isinstance(trimmed, list):
+        not_list = True
+        trimmed = [trimmed]
+    if not isinstance(by, list):
+        by = [by]
     if len(by) == 0:
         return []
     start = max(s.index[0] for s in by)
-    return [s[start:] for s in get(trimmed)]
+    res = [s[start:] for s in get(trimmed)]
+    if not_list:
+        return res[0]
+    return res
 
 def sync(a, b):
     idx = a.index.intersection(b.index)
@@ -1809,7 +1904,7 @@ def doAlign(data):
         return data
     newArr = []
     for s in data:
-        if isinstance(s, Wrapper) or isinstance(s, pd.Series):
+        if is_series(s):
             #s = s / s[date] # this can sometime fail for messing data were not all series have the same index
             base = s[date:]
             if base.shape[0] == 0:
@@ -1818,6 +1913,29 @@ def doAlign(data):
                 s = s / base[0]
         newArr.append(s)
     return newArr
+
+def align_with(s, w):
+    if s.index[0] in w:
+        return s * w[s.index[0]] / s[0]
+    if w.index[0] in s:
+        return s * w[0] / s[w.index[0]]
+    raise Exception(f"Cannot align {get_pretty_name(s)} with {get_pretty_name(w)}, no common start date found")
+
+def align_rel(all, base=None):
+    if len(all) == 0:
+        return all
+    all = sorted(all, key=lambda s: s.index[0])
+    if base is None:
+        base = all[0]
+        res = [base]
+        all = all[1:]
+    else:
+        res = []
+    for s in all:
+        s = align_with(s, base)
+        res.append(s)
+    #    base = s
+    return res
 
 def doClean(data):
     return [s.dropna() if is_series(s) else s for s in data]
@@ -1831,7 +1949,7 @@ def try_parse_date(s, format):
 def easy_try_parse_date(s):
     return try_parse_date(s, "%d/%m/%Y") or try_parse_date(s, "%d.%m.%Y") or try_parse_date(s, "%d-%m-%Y")
     
-def show(*data, trim=True, align=True, ta=True, cache=None, mode=None, source=None, reget=None, silent=False, **plotArgs):
+def show(*data, trim=True, align=True, align_base=None, ta=True, cache=None, mode=None, source=None, remode=None, untrim=None, silent=False, **plotArgs):
     getArgs = {}
     if not mode is None:
         getArgs["mode"] = mode
@@ -1839,12 +1957,16 @@ def show(*data, trim=True, align=True, ta=True, cache=None, mode=None, source=No
         getArgs["cache"] = cache
     if not source is None:
         getArgs["source"] = source
-    if not reget is None:
-        getArgs["reget"] = reget
+    if not remode is None:
+        getArgs["remode"] = remode
+    if not untrim is None:
+        getArgs["untrim"] = untrim
     
     data = flattenLists(data)
     items = []
     for x in data:
+        if x is None:
+            continue
         if isinstance(x, pd.DataFrame):
             items += [x[c] for c in x]
         elif isinstance(x, datetime.datetime) or isinstance(x, np.datetime64):
@@ -1853,19 +1975,25 @@ def show(*data, trim=True, align=True, ta=True, cache=None, mode=None, source=No
             items.append(easy_try_parse_date(x))
         elif isinstance(x, numbers.Real):
             items.append(x)
+        elif is_named_number(x):
+            items.append(x)
         else:
             x = get(x, **getArgs)
             items.append(x)
     data = items
     data = doClean(data)
-    dataSeries = [s for s in data if isinstance(s, pd.Series) or isinstance(s, Wrapper)]
+    dataSeries = [s for s in data if is_series(s)]
     if not ta:
         trim = False
         align = False
     if any([s[unwrap(s)<0].any() for s in dataSeries]):
         align = False
     if trim: data = doTrim(data, trim=trim)
-    if align: data = doAlign(data)
+    if align:
+        if align == "rel":
+            data = align_rel(data, base=align_base)
+        else:
+            data = doAlign(data)
         
     if not silent:
         plot(*data, **plotArgs)
@@ -1920,11 +2048,11 @@ def show_scatter(xs, ys, setlim=True, lines=False, color=None, annotations=None,
                 txt = globals()["fixtext"](txt)
             plt.annotate(txt, (xs[i], ys[i]), fontsize=14)
 
-def show_modes(s):
-    show(modes(s))
+def show_modes(*lst, **args):
+    show(*lmap(modes, lst), **args)
 
-def show_modes_comp(a, b):
-    show([r(x, y) for x,y in zip(modes(a), modes(b))], 1)
+def show_modes_comp(a, b, show_zero=True):
+    show([sdiv(x, y) for x,y in zip(modes(a), modes(b))], 1, 0 if show_zero else None, title="relative modes")
 
 def show_scatter_returns(y_sym, x_sym, freq=None):
     x_sym, y_sym = get(x_sym), get(y_sym)
@@ -1943,52 +2071,36 @@ def warn(*arg, **args):
     print(*arg, file=sys.stderr, **args)
 
 
-# def show_risk_return(*lst, ret_func=None, risk_func=None, trim=True, **args):
-#     plt.figure()
-#     allItems = []
-#     flatItems = []
-#     listItems = []
+def reduce_series(lst, g_func=None, y_func=None, x_func=None):
+    if g_func:
+        ys = [[y_func(gf(s)) for gf in g_func] for s in lst]
+        xs = [[x_func(gf(s)) for gf in g_func] for s in lst]
+    else:
+        ys = [[yf(s) for yf in y_func] for s in lst]
+        xs = [[x_func(s)] * len(y_func) for s in lst]
     
-#     lst = lmap(get, lst)
-    
-#     for x in lst:
-#         if isinstance(x, list):
-#             allItems += x
-#             listItems.append(x)
-#         else:
-#             allItems.append(x)
-#             flatItems.append(x)
-    
-#     if trim:
-#         if len(listItems) > 0:
-#             warn("showRiskReturn: Cannot auto-trim with list-items")
-#         else:
-#             allItems = doTrim(allItems)
-#             flatItems = allItems
-            
-#     if len(listItems) == 0:
-#         showRiskReturnUtil(flatItems, ret_func=ret_func, risk_func=risk_func, **args)
-#     else:
-#         args2 = args.copy()
-#         #del args2["annotations"]
-#         showRiskReturnUtil(allItems, ret_func=ret_func, risk_func=risk_func, annotations=False, **args2)
-#         if len(flatItems) > 0:
-#             showRiskReturnUtil(flatItems, ret_func=ret_func, risk_func=risk_func, setlim=False, **args)
-#         for lst in listItems:
-#             annotations = [""] * len(lst)
-#             annotations[0] = lst[0].name
-#             annotations[-1] = lst[-1].name
-#             #set_if_none(args, "annotations", annotations)
-#             showRiskReturnUtil(lst, ret_func=ret_func, risk_func=risk_func, setlim=False, lines=True, annotations=annotations, **args)
+    res = [pd.Series(y, x) for y, x in zip(ys, xs)]
+    res = [name(r, get_name(s)) for r, s in zip(res, lst)]
+    return res
 
-def show_risk_return(*lst, ret_func=None, risk_func=None, trim=True, title=None, **args):
-    title = title or "Risk-Return"
+# experimental
+def show_risk_return2(*lst, g_func=None, y_func=None, x_func=None):
+    y_func = y_func or cagr
+    x_func = x_func or ulcer
+    r = reduce_series(lst, g_func=g_func, y_func=y_func, x_func=x_func)
+    plot_scatter(*r, show_zero_point=True)
+# e.g.:
+# show_risk_return2(*all, g_func=[ft.partial(get, despike=False), get])
+
+def show_risk_return(*lst, ret_func=None, risk_func=None, trim=True, **args):
     if ret_func is None: ret_func = cagr
     if risk_func is None: risk_func = ulcer
     lst = get(lst, trim=trim)
     lst = [x if isinstance(x, list) else [x] for x in lst]
     res = [get_risk_return_series(x, ret_func=ret_func, risk_func=risk_func) for x in lst]
-    plot_scatter(*res, title=title, xlabel=risk_func.__name__, ylabel=ret_func.__name__, show_zero_point=True)
+    args['show_zero_point'] = True
+    set_if_none(args, 'title',  "Risk-Return")
+    plot_scatter(*res, xlabel=risk_func.__name__, ylabel=ret_func.__name__, **args)
 
 showRiskReturn = show_risk_return # legacy
 
@@ -1998,7 +2110,7 @@ def get_risk_return_series(lst, ret_func, risk_func, **args):
     lst = [get(s) for s in lst]
     ys = [ret_func(unwrap(s)) for s in lst]
     xs = [risk_func(unwrap(s)) for s in lst]
-    names = [s.name for s in lst]
+    names = [get_pretty_name_no_mode(s.name) for s in lst]
 
     res = pd.Series(ys, xs)
     res.name = names[0]
@@ -2047,7 +2159,7 @@ def get_risk_return_series(lst, ret_func, risk_func, **args):
 
 def show_risk_return_modes(*lst, ret_func=None, modes=['TR', 'NTR', 'PR'], title=None):
     def get_data(lst, mode):
-        return get(lst, mode=mode, despike=True, trim=True, reget=True)
+        return get(lst, mode=mode, despike=True, trim=True)
 
     data_lst = [get_data(lst, mode) for mode in modes]
     all = [list(tup) for tup in zip(*data_lst)]
@@ -2062,7 +2174,7 @@ def show_risk_yield_types(*lst, ret_func=None, types=['true', 'normal', 'rolling
         rsk = lmap(ulcer, lst)
         return pd.Series(yld, rsk)
 
-    lst = get(lst, mode=mode, trim=True, reget=True, despike=True)
+    lst = get(lst, mode=mode, trim=True, despike=True)
     res = []
     for s in lst:
         yld = []
@@ -2084,7 +2196,7 @@ def show_risk_itr_pr(*lst, title=None):
         rsk = lmap(ulcer, lst)
         return pd.Series(yld, rsk)
 
-    lst = get(lst, mode=mode, trim=True, reget=True, despike=True)
+    lst = get(lst, mode=mode, trim=True, despike=True)
     res = []
     for s in lst:
         pr = get(s, mode="PR")
@@ -2190,11 +2302,12 @@ def mix(s1, s2, n=10, do_get=False, **getArgs):
         name = dict_to_port_name(x, drop_zero=True, drop_100=True, use_sym_name=False)
         if i > 0 and i < n:
             name = ''
+        x = f"{port}={name}"
         if do_get:
             x = get(x, **getArgs)
-            x.name = name
-        else:
-            x = f"{port}={name}"
+            #x.name = name
+        # else:
+        #     x = f"{port}={name}"
         res.append(x)
     return lmap(unwrap, res)
         
@@ -2214,29 +2327,15 @@ def mmin(s, n):
     n = int(n)
     return wrap(s.rolling(n).min(), "mmin({}, {})".format(s.name, n))
 
-def cagr(s):
-    days = (s.index[-1] - s.index[0]).days
-    if days <= 0:
-        return np.nan
-    years = days/365
-    val = s[-1] / s[0]
-    return (math.pow(val, 1/years)-1)*100
-
-def ulcer(x):
-    cmax = np.maximum.accumulate(x)
-    r = (x/cmax-1)*100
-    return math.sqrt(np.sum(r*r)/x.shape[0])
-
-# std of monthly returns
-def stdmret(s):
-    return ret(s).std()*math.sqrt(12)*100
 
 # https://stackoverflow.com/questions/38878917/how-to-invoke-pandas-rolling-apply-with-parameters-from-multiple-column
 # https://stackoverflow.com/questions/18316211/access-index-in-pandas-series-apply
 def roll_ts(s, func, n, dropna=True):
     # note that rolling auto-converts int to float: https://github.com/pandas-dev/pandas/issues/15599
-    i_ser = pd.Series(range(s.shape[0]))
-    res = i_ser.rolling(n).apply(lambda x: func(pd.Series(s.values[x.astype(int)], s.index[x.astype(int)])))
+    # i_ser = pd.Series(range(s.shape[0]))
+    # res = i_ser.rolling(n).apply(lambda x: func(pd.Series(s.values[x.astype(int)], s.index[x.astype(int)])))
+    res = s.rolling(n).apply(func, raw=False) # with raw=False, we get a rolling Series :)
+
     res = pd.Series(res.values, s.index)
     if dropna:
         res = res.dropna()
@@ -2373,8 +2472,11 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
         return np.sum((logret(target) - logret(pred)) ** 2)
 
     # prep data
+    if not isinstance(sources, list):
+        sources = [sources]
     sources = [s for s in sources if (not s is target) and getName(s) != getName(target)]
     orig_sources = sources
+    orig_target = get(target)
 
     target, sources = prep_as_df(target, sources, as_geom_value=fit_values, freq=freq)
     sources_logret = sources.apply(lambda x: logret(x, dropna=False), axis=0)
@@ -2510,7 +2612,7 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
         #d = Portfolio([(s, ser[getName(s)]*100) for s in orig_sources])
         d = (ser*100).to_dict()
         if True:
-            pred = name(get(d), target.name + " - fit")
+            pred = name(get(d, mode=orig_target.name.mode), orig_target.name.pretty_name + " - fit")
             pred = pred / pred[_pred.index[0]] * _pred[0]
             port = dict_to_port_name(d, drop_zero=True, drop_100=True, use_sym_name=True)
             pred_str = f"{port} = {target.name} - fit"
@@ -2590,7 +2692,7 @@ def lrret_old(target, regressors, sum1=False):
 def lrret_incremental(target, sources, show=True, show_steps=False, max_n=None, **lrret_args):
     if not isinstance(sources, list):
         sources = [sources]
-    target, *sources = get([target] + sources, trim=True, reget=False)
+    target, *sources = get([target] + sources, trim=True)
     sources = sources.copy()
     top = []
     cum_sources = []
@@ -2637,7 +2739,7 @@ def lrret_incremental(target, sources, show=True, show_steps=False, max_n=None, 
 def lrret_mutual_cross(*sources, show=True, **lrret_args):
     if len(sources) <= 1:
         return pd.Series()
-    sources = get(sources, trim=True, reget=False)
+    sources = get(sources, trim=True)
     res = []
     for target in sources:
         rest = [s for s in sources if s.name != target.name]
@@ -2665,7 +2767,7 @@ def lrret_mutual_cross(*sources, show=True, **lrret_args):
 def lrret_mutual_incremental(*sources, base=None, show=True, max_n=None, **lrret_args):
     if base is None:
         base = lc
-    base, *sources = get([base] + list(sources), trim=True, reget=False)
+    base, *sources = get([base] + list(sources), trim=True)
     cum_sources = [base]
     top = []
     while len(sources) > 0:
@@ -2729,6 +2831,29 @@ def lr(y):
     pred = name(pd.Series(pred, y.index), y.name + " fit")
     return pred
     
+def lr_beta(y, X=None, pvalue=False):
+    if X is None:
+        X = np.arange(y.shape[0])
+        X = sm.add_constant(X)
+        model = sm.OLS(y, X).fit()
+        if pvalue:
+            return model.params[1], model.pvalues[1]
+        return model.params[1]
+    else:
+        X = sm.add_constant(X)
+        model = sm.OLS(y, X).fit()
+        if pvalue:
+            return model.params[1], model.pvalues[1]
+        return model.params[1]
+    
+def lrret_beta(y, X, freq=None, pvalue=False):
+    y = get(y, freq=freq)
+    X = get(X, freq=freq)
+    y = logret(y)
+    X = logret(X)
+    y, X = sync(y, X)
+    return lr_beta(y, X, pvalue=pvalue)
+
 def mean_logret_series(y):
     res =  name(pd.Series(i_logret(np.full_like(y, logret(y).mean())), y.index), y.name + " mean logret")
     res *= y[0]/res[0]
@@ -2745,10 +2870,10 @@ def getMeanSer(lst):
     df = pd.DataFrame([unwrap(s) for s in lst]).T
     return wrap(df.mean(axis=1), "mean")
 
-def r(a, b):
+def sdiv(a, b):
     a, b = get([a, b])
     x = a / b
-    x.name = a.name + " / " + b.name
+    x.name = a.name.pretty_name + " / " + b.name.pretty_name
     return x
 
 # In[ ]:
@@ -2851,7 +2976,7 @@ if intercept and not "my_transformer_tokens_instance" in locals():
         trimmed_messages.clear()
         
         for i, x in enumerate(tokens):
-            if x.type == 1 and x.string.isupper() and x.string.isalpha(): ## type=1 is NAME token
+            if x.type == 1 and x.string.isupper() and x.string.isalpha() and len(x.string) >= 2: ## type=1 is NAME token
                 if i < len(tokens)-1 and tokens[i+1].type == 53 and tokens[i+1].string == "=":
                     attempted_implied_fetches.add(x.string)
                     continue
@@ -2968,7 +3093,7 @@ if not "fixed_globals_once" in globals():
     cjb = 'VWEHX' # JNK, HYG # junk bonds
 #    junk = cjb # legacy
     scjb = 'HYS' # short-term-corp-junk-bonds
-    aggg_idx = "LEGATRUU;IND@B" # AGGG.L Global bonds unhedged
+    aggg_idx = "LEGATRUU;IND@B" # AGGG.L Global bonds unhedged (TR - Total Return)
 
     # ==== CASH ====
     rfr = 'SHV' # BIL # risk free return (1-3 month t-bills)
@@ -3128,7 +3253,7 @@ oilBrentQ,
 
 assets_core = [
     # equities
-    ac,
+    lc,
     i_ac,
     i_dev,
     em_ac,
@@ -3193,6 +3318,8 @@ interestingCurrencies = ["USDEUR", "USDCAD", "USDJPY", "USDAUD", "USDJPY", "USDC
 
 # In[ ]:
 
+def get_named(s, func):
+    return (func(s), f"{get_pretty_name(s)} {func.__name__}")
 
 # def divs(symbolName, period=None, fill=False):
 #     if isinstance(symbolName, tuple) and period is None:
@@ -3222,7 +3349,7 @@ def divs(symbolName, period=None, fill=False):
         #divs = pd.Series(index=pd.DatetimeIndex(freq="D"))
         divs.name = name
     else:
-        divs = get(symbolName, mode="divs", reget=True)
+        divs = get(symbolName, mode="divs")
         divs = divs[divs>0]
     if period:
         divs = wrap(divs.rolling(period).sum())
@@ -3239,12 +3366,17 @@ def get_divs_interval(divs):
     monthds_diff = monthds_diff[-5:].median()
     return monthds_diff
 
-def show_yields(sym):
+def get_yields(sym):
     n = get_name(sym)
     true_yield = name(get_yield(sym, type='true'), n + " true")
     normal_yield = name(get_yield(sym, type='normal'), n + " normal")
     rolling_yield = name(get_yield(sym, type='rolling'), n + " rolling")
-    show(true_yield, normal_yield, rolling_yield, 0, ta=False, log=False)
+    return[true_yield, normal_yield, rolling_yield]
+
+def show_yields(*lst):
+    yields = lmap(get_yields, lst)
+    rets = [get_named(x, cagr) for x in get(lst, trim=True)]
+    show(*yields, rets, 0, ta=False, log=False)
 
 def get_yield_true(sym):
     return get_yield(sym, type='true')
@@ -3301,7 +3433,7 @@ def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months
         months_between_dists = int(12 // dists_per_year)
 
     if window_months < months_between_dists:
-        warn(f"auto correcting window_months to {months_between_dists}")
+        #warn(f"auto correcting window_months to {months_between_dists}")
         window_months = months_between_dists
 
     n = int(window_months / months_between_dists)
@@ -3313,6 +3445,9 @@ def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months
 
 def get_curr_yield_normal(s):
     return get_curr_yield(s, type='normal')
+
+def get_curr_yield_rolling(s):
+    return get_curr_yield(s, type='rolling')
 
 def get_curr_yield(s, type=None):
     type = type or 'normal'
@@ -3330,28 +3465,54 @@ def get_TR_from_PR_and_divs(pr, divs):
     tr = pr * mCP
     return wrap(tr, pr.name + " TR")
 
+def show_income(*all, **args):
+    income = lmap(partial(get_income, **args), all)
+    show(income, 0, ta=False, log=False, title="net income")
+
 def show_cum_income(*all):
-    income = lmap(lambda x: get_income(x, smooth=0), all)
-    income = [x.cumsum() for x in income]
+    income = lmap(get_cum_income, all)
     show(income, ta=False, log=False, legend=False, title="cumulative net income")
 
-def analyze_assets(*all, start=None, despike=True):
+def show_cum_income_relative(*all, base_i=0):
+    income = lmap(get_cum_income, all)
+    income = [sdiv(x, income[base_i]) for x in income]
+    show(income, ta=False, log=False, legend=False, title="relative cumulative net income")
+
+def analyze_assets(*all, start=None, despike=True, few=None):
     all = get(all, start=start, despike=despike) # note we don't trim
+    all_trim = get(all, trim=True)
+    if few is None:
+        few = len(all) <= 5
+
+    if few:
+        show(*all, trim=False, align='rel')
+        show_modes(*all)
 
     # risk-return
     bases = [ mix(lc, gb, do_get=False), mix(i_ac, gb, do_get=False)]
-    lst = get(all + bases, mode="TR", reget=True)
+    lst = get(all + bases, mode="TR")
     show_risk_return(*lst, title="TR Risk-Return")
-    lst = get(all + bases, mode="NTR", reget=True)
+    lst = get(all + bases, mode="NTR")
     show_risk_return(*lst, title="NTR Risk-Return")
-    lst = get(all + bases, mode="ITR", reget=True)
+    lst = get(all + bases, mode="ITR")
     show_risk_return(*lst, title="ITR Risk-Return")
-    lst = get(all + bases, mode="PR", reget=True)
+    lst = get(all + bases, mode="PR")
     show_risk_return(*lst, title="PR Risk-Return")
     show_risk_return_modes(*all)
     
+    # draw-down
+    if few:
+        show_dd(*all)
+
+    # withdraw flows
+    show_flows(*all)
 
     # Yields
+    show_risk_ntr_pr_diff_pr(*all)
+    show_risk_ntr_pr_diff_pr_full_alt(*all)
+    show_risk_ntr_pr_diff_pr_full_alt(*lst, trim=False)
+
+
     show_risk_yield_types(*all)
     show_risk_yield(*all)
     show_risk_return_modes(*all, ret_func=get_curr_yield_normal, modes=['TR'], title='Risk - NORMAL Yield TR')
@@ -3371,10 +3532,9 @@ def analyze_assets(*all, start=None, despike=True):
 
     # Income
     show_cum_income(*all)
-    show_cum_income(*get(all, trim=True))
-    
-    income = lmap(get_income, all)
-    show(income, 0, ta=False, log=False, title="net income")
+    show_cum_income(*all_trim)
+    show_cum_income_relative(*all_trim)
+    show_income(*all)
 
     show(lmap(adj_inf, lmap(price, all)), 1, title="real price")
 
@@ -3385,8 +3545,12 @@ def analyze_assets(*all, start=None, despike=True):
 
     # PCA / MDS
     show_mds(*all)
-    
-#show_cum_income(*all)
+
+    # modes
+
+def show_dd(*all, mode="PR"):
+    all = get(all, mode=mode)
+    show(lmap(dd, all), -10, -20, -30, -40, -50, ta=False, title=f"{mode} draw-down")
 
 def _despike(s, std, window, shift):
     if isinstance(s, list):
@@ -3395,12 +3559,15 @@ def _despike(s, std, window, shift):
     new_s = s.copy()
     ret = logret(s, dropna=False).fillna(0)
     new_s[(ret - ret.mean()).abs() > ret.shift(shift).rolling(window).std().fillna(ret.max()) * std] = np.nan
-    return wrap(new_s.interpolate(), s.name)
+    return name(new_s.interpolate(), s.name)
 
 # we despike from both directions, since the method has to warm up for the forst window
 def despike(s, std=8, window=30, shift=10):
+    os = s
     s = _despike(s, std=std, window=window, shift=shift)
     s = _despike(s[::-1], std=std, window=window, shift=shift)[::-1]
+    # if np.any(os != s):
+    #     print(f"{s.name} was despiked")
     return s
 
 def get_date(x):
@@ -3426,9 +3593,16 @@ def filterByStart(lst, start=None):
         print(f"dropped: {', '.join(dropped)}")
     return res        
 
-def price(sym):
-    return get(sym, mode="PR", reget=True)
-    
+def tr(s):
+    return get(s, mode="TR")
+
+def ntr(s):
+    return get(s, mode="NTR")
+
+def pr(sym):
+    return get(sym, mode="PR")
+price = pr
+
 def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True):
     start = None
     if is_series(sym):
@@ -3617,6 +3791,8 @@ def get_anlz_factor(freq):
 ####################   PCA
 from sklearn.decomposition import PCA
 
+
+
 def get_ols_beta_dist(*all):
     df = get_ret_df(*all)
     n = df.shape[1]
@@ -3715,3 +3891,291 @@ def show_mds(*all, type=['cor', 'cov', 'beta', 'weight', 'R2']):
         _show_mds(*all, type=t)
 
 ####################   PCA
+
+
+#################### Func Tools #####################
+# e.g.:
+# compose(cagr, despike, get)(SPY)
+# partial(get, mode="TR")(SPY)
+import functools as ft
+from functools import partial
+def compose(*functions):
+    return ft.reduce(lambda f, g: lambda x: f(g(x)), functions, lambda x: x)
+
+
+#################### portfolio value and flow ############
+def port_value(s, flow=None, cash=100000):
+    start = None
+    if is_series(s):
+        start = s.index[0]
+
+    pr = price(s)
+    dv = divs(s)
+    dv = dv * 0.75
+    if not start is None:
+        pr = pr[start:]
+    if not start is None:
+        dv = dv[start:]
+ 
+    purchace_price = pr[0]
+    units = cash / purchace_price
+    dv = dv.reindex(pr.index).fillna(0)
+    flow = flow.reindex(pr.index).fillna(0)
+    res = pd.Series(0.0, pr.index)
+    accum_cash = 0
+    for dt in pr.index:
+        cpr = pr[dt]
+        cdv = dv[dt]
+        cfl = flow[dt]
+        if cdv > 0:
+            accum_cash += units * cdv
+        if cfl < 0: # we assume only negatives for now
+            take_from_cash = min(accum_cash, abs(cfl))
+            accum_cash -= take_from_cash
+            cfl += take_from_cash
+            if cfl != 0:
+                diff_units = -cfl / cpr
+                units -= diff_units
+                if cpr > purchace_price:
+                    gain = diff_units * (cpr - purchace_price)
+                    tax = gain * 0.25
+                    accum_cash -= tax
+        if accum_cash > 0:
+            new_units = accum_cash / cpr
+            units += new_units
+            accum_cash = 0
+        c_val = units * cpr
+        if c_val < 0:
+            c_val = 0
+        res[dt] = c_val
+        
+    res.name = get_name(s) + " -flow"
+#    print(f"left with accum' cash {accum_cash}")
+    return res
+
+def get_flow(s, amount=None, rate=None, freq="M", inf=0.03):
+    if amount is None and rate is None:
+        rate = 0.04
+#        raise Exception(f"amount or rate must be defined")
+    pr = price(s)
+    if amount is None and not rate is None:
+        amount = rate * 100000 / 12
+    flow = pd.Series(0.0, index=pr.index)
+    flow = flow.resample("M").sum()
+    flow -= amount
+    mult = np.full(len(flow), math.pow(1+inf, 1/12)).cumprod()
+    flow *= mult
+    flow.name = f"{pr.name} flow"
+    return flow
+
+def get_port_with_flow(s, amount=None, rate=None, freq="M", inf=0.03):
+    flow = get_flow(s, amount=amount, rate=rate, freq=freq, inf=inf)
+    res = port_value(s, flow)
+    if not rate is None:
+        res.name = f"{s.name} {rate*100:.0f}%"
+    return res
+
+def show_port_with_flow(s, amount=None, rate=None, freq="M", inf=0.03, income_smooth=0):
+    s_ntr = get(s, mode="NTR")
+    flow = get_flow(s, amount=amount, rate=rate, freq=freq, inf=inf)
+    s_flow = port_value(s, flow)
+    show(s_ntr, s_flow, price(s))
+    show(0, get_income(s, smooth=income_smooth), -flow, ta=False, log=False)
+    wrate = -flow / s_flow * 12 * 100
+    show(get_yield_true(s), wrate, 0, ta=False, log=False)
+    
+def show_port_flow_comp(target, base):
+    base, target = get([base, target], trim=True, mode="NTR")
+    flow = -get_income(target, smooth=0)
+    base_flow = port_value(base, flow)
+    target_pr = get(target, mode="PR")
+    #show(base, base_flow, target, target_pr, 0, 1)
+    show(base_flow, target_pr, 0, 1, title="base with flow vs target PR")
+
+    relative_value = target_pr / base_flow
+    relative_value.name = "target_pr / base_flow"
+    relative_ntr = ntr(target) / ntr(base)
+    relative_ntr.name = "relative NTR"
+    show(relative_value, relative_ntr, 0, 1, title="relative base with flow / target PR")
+
+def get_flows(s, n=None, rng=None):
+    sers = []
+    if rng is None and n is None:
+        rng = range(5)
+    if rng is None:
+        rng = range(n)
+    for i in rng:
+        ser = get_port_with_flow(s, rate=i/100, inf=0)
+        ser.name = f"{s.name} {i}%"
+        sers.append(ser)
+    return sers
+    
+########################################## 
+
+def show_flows(*all, n=None, rng=None):
+    if rng is None:
+        rng = [0, 5]
+    all = get(all, trim=True)
+    all = lmap(lambda x: get_flows(x, n=n, rng=rng), all)
+    show_risk_return(*all, title="net flows")
+
+
+def show_comp(target, base, extra=None, mode="NTR"):
+    target, base, extra = get([target, base, extra], mode=mode)
+    all = [target, base]
+    if not extra is None:
+        if isinstance(extra, list):
+            all += extra
+        else:
+            all.append(extra)
+    all_trim = get(all, trim=True)
+
+    show(*all, 0.5, 1, trim=False, title=mode + " equity") # use 0.5 instead of 0 to keep the log scale
+    show_dd(*all)
+    show_dd(*all_trim)
+    show_yields(*all)
+    show_income(*all)
+    show_income(*all, smooth=0)
+    show_cum_income(*all_trim)
+    show_cum_income_relative(*all_trim, base_i=1)
+    show_modes_comp(target, base)
+    show_port_flow_comp(target, base)
+    show_flows(*all)
+
+
+############### risk / return metrics ###############
+
+def cagr(s):
+    days = (s.index[-1] - s.index[0]).days
+    if days <= 0:
+        return np.nan
+    years = days/365
+    val = s[-1] / s[0]
+    if val < 0:
+        raise Exception("Can't calc cagr for a negative value") # this indicates that the series is not an equity curve
+    return (math.pow(val, 1/years)-1)*100
+
+def ulcer(x):
+    cmax = np.maximum.accumulate(x)
+    r = (x/cmax-1)*100
+    return math.sqrt(np.sum(r*r)/x.shape[0])
+
+# std of monthly returns
+def stdmret(s):
+    return ret(s).std()*math.sqrt(12)*100
+
+def pr_beta(s):
+    return lr_beta(price(s))
+
+def pr_cagr(s):
+    return cagr(price(s))
+
+def pr_lr_cagr(s):
+    x = lr(price(s))
+    x = x[x>0] # we won't be able to calc cagr for negative values
+    return cagr(x)
+
+def pr_cagr_full(s):
+    return cagr(get(s, untrim=True, mode="PR"))
+
+
+
+
+############ special risk-return ####################
+
+# def show_risk_itr_pr(*lst, title=None):
+#     prs = get(lst, mode="PR", trim=True)
+#     itrs = get(lst, mode="ITR", trim=True)
+#     res = []
+#     for pr, itr in zip(prs, itrs):
+#         pr_ulcer = ulcer(pr)
+#         x = [pr_ulcer, pr_ulcer]
+#         y = [cagr(pr), cagr(itr)]
+#         ser = pd.Series(y, index=x)
+#         ser.name = pr.name
+#         ser.names = [pr.name, '']
+#         res.append(ser)
+    
+#     title = title or f"PR Risk - ITR Return"
+#     plot_scatter(*res, title=title, xlabel="ulcer", ylabel="cagr", show_zero_point=True)
+
+# def show_risk_itr_pr_diff(*lst, title=None):
+#     prs = get(lst, mode="PR", trim=True)
+#     itrs = get(lst, mode="ITR", trim=True)
+#     res = []
+#     for pr, itr in zip(prs, itrs):
+#         pr_ulcer = ulcer(pr)
+#         x = [pr_ulcer]
+#         y = [cagr(itr)-cagr(pr)]
+#         ser = pd.Series(y, index=x)
+#         ser.name = pr.name
+#         ser.names = [pr.name]
+#         res.append(ser)
+    
+#     title = title or f"PR Risk - ITR Return"
+#     plot_scatter(*res, title=title, xlabel="ulcer", ylabel="cagr", show_zero_point=True)
+
+def start_year_full(s):
+    s = get(s, untrim=True)
+    return str(s.index[0].year)
+def start_year_full_with_name(s):
+    return f"{s.name} {start_year_full(s)}"
+
+def show_risk_ntr_pr_diff_pr_full_alt(*lst, trim=True):
+    alt_text = start_year_full if trim else start_year_full_with_name
+    show_risk_ntr_pr_diff_pr(*lst, alt_risk_func=cagr_full, alt_risk_text=alt_text, trim=trim)
+
+def show_risk_ntr_pr_diff_pr(*lst, risk_func=cagr, alt_risk_func=pr_lr_cagr, alt_risk_text=None, title=None, trim=True):
+    # date = getCommonDate(lst, 'start')
+    # prs = get(lst, mode="PR", trim=date)
+    # ntrs = get(lst, mode="NTR", trim=date)
+    prs = get(lst, mode="PR", trim=trim)
+    ntrs = get(lst, mode="NTR", trim=trim)
+    res = []
+    for pr, ntr in zip(prs, ntrs):
+        if pr.shape[0] == 0:
+            continue
+        pr_ulcer = ulcer(pr)
+        yld = get_curr_yield(get(pr, mode="NTR"), type='rolling')
+        risk1 = risk_func(pr)
+        x = [risk1, risk1]
+        y = [cagr(ntr)-cagr(pr), yld]
+        if not alt_risk_func is None:
+            x.insert(0, alt_risk_func(pr))
+            y.insert(0, y[0])
+        ser = pd.Series(y, index=x)
+        ser.name = pr.name.pretty_name_no_mode
+        ser.names = [ser.name, '']
+        if not alt_risk_func is None:
+            txt = '' if alt_risk_text is None else alt_risk_text(pr)
+            ser.names.insert(0, txt)
+        res.append(ser)
+    
+    ally = flatten(res)
+    mx = np.max(ally)+2
+    mn = min(np.min(ally)-2, 0)
+    def add_base(offset):
+        base = pd.Series([mn, mx], [offset-mn, offset-mx])
+        base.name = f"{offset}% net return"
+        base.names = ['', '']
+        res.append(base)
+    add_base(0)
+    add_base(5)
+    add_base(10)
+    add_base(15)
+    res.append(5)
+    title = title or f"PR Risk - NTR above PR Return"
+    plot_scatter(*res, title=title, xlabel=f"{risk_func.__name__} ➜ {alt_risk_func.__name__}", ylabel="cagr(NTR) - cagr(PR) ➜ curr 12m net yield", show_zero_point=True, same_ratio=True)
+
+############################# python utils ###########
+
+def list_rm(l, *items):
+    l = l.copy()
+    for x in items:
+        l.remove(x)
+    return l    
+
+############################
+
+def get_real(s):
+    return rename(get(s) / get(cpiUS), f"{get_pretty_name(s)} real")
