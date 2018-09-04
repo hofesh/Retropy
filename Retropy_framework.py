@@ -1799,7 +1799,19 @@ def getCommonDate(data, pos, agg=max, get_fault=False):
 def is_series(x):
     return isinstance(x, pd.Series) or isinstance(x, Wrapper)
 
+def is_series_or_str(x):
+    return isinstance(x, str) or is_series(x)
+
+def is_not_series_or_str(x):
+    return not is_series_or_str(x)
+
 trimmed_messages = set()
+def print_norep(msg):
+    if not msg in trimmed_messages:
+        trimmed_messages.add(msg)
+        print(msg)
+
+
 def doTrim(data, silent=False, trim=True):
     data = _doTrim(data, 'start', silent=silent, trim=trim)
     data = _doTrim(data, 'end', silent=silent, trim=not trim is False)
@@ -2072,37 +2084,48 @@ def warn(*arg, **args):
 
 
 def reduce_series(lst, g_func=None, y_func=None, x_func=None):
-    if g_func:
+    if not isinstance(g_func, list):
+        lst = lmap(g_func, lst)
+    if isinstance(g_func, list):
         ys = [[y_func(gf(s)) for gf in g_func] for s in lst]
         xs = [[x_func(gf(s)) for gf in g_func] for s in lst]
-    else:
+    elif isinstance(y_func, list):
         ys = [[yf(s) for yf in y_func] for s in lst]
         xs = [[x_func(s)] * len(y_func) for s in lst]
     
     res = [pd.Series(y, x) for y, x in zip(ys, xs)]
     res = [name(r, get_name(s)) for r, s in zip(res, lst)]
+    for r, s in zip(res, lst):
+        r.name = start_year_full_with_name(s)
+        r.names = [''] * r.shape[0]
+        r.names[0] = str(s.name)
     return res
 
 # experimental
-def show_risk_return2(*lst, g_func=None, y_func=None, x_func=None):
+def show_risk_return2(*lst, g_func=None, y_func=None, x_func=None, **args):
     y_func = y_func or cagr
     x_func = x_func or ulcer
-    r = reduce_series(lst, g_func=g_func, y_func=y_func, x_func=x_func)
-    plot_scatter(*r, show_zero_point=True)
+    non_ser = lfilter(is_not_series_or_str, lst)
+    r = reduce_series(lfilter(is_series_or_str, lst), g_func=g_func, y_func=y_func, x_func=x_func)
+    plot_scatter(*r, *non_ser, show_zero_point=True, **args)
 # e.g.:
 # show_risk_return2(*all, g_func=[ft.partial(get, despike=False), get])
 
-def show_risk_return(*lst, ret_func=None, risk_func=None, trim=True, **args):
+def show_rr(*lst, ret_func=None, risk_func=None, trim=True, **args):
     if ret_func is None: ret_func = cagr
     if risk_func is None: risk_func = ulcer
+    non_ser = lfilter(lambda x: not(is_series_or_str(x) or isinstance(x, list)), lst)
+    lst = lfilter(lambda x: is_series_or_str(x) or isinstance(x, list), lst)
     lst = get(lst, trim=trim)
     lst = [x if isinstance(x, list) else [x] for x in lst]
     res = [get_risk_return_series(x, ret_func=ret_func, risk_func=risk_func) for x in lst]
     args['show_zero_point'] = True
     set_if_none(args, 'title',  "Risk-Return")
-    plot_scatter(*res, xlabel=risk_func.__name__, ylabel=ret_func.__name__, **args)
+    set_if_none(args, 'xlabel', risk_func.__name__)
+    set_if_none(args, 'ylabel', ret_func.__name__)
+    plot_scatter(*non_ser, *res, **args)
 
-showRiskReturn = show_risk_return # legacy
+showRiskReturn = show_rr # legacy
 
 def get_risk_return_series(lst, ret_func, risk_func, **args):
     if len(lst) == 0:
@@ -2157,18 +2180,18 @@ def get_risk_return_series(lst, ret_func, risk_func, **args):
 #     args = set_if_none(args, "show_zero_point", True)
 #     show_scatter(xs, ys, xlabel=xlabel, ylabel=ylabel, **args)
 
-def show_risk_return_modes(*lst, ret_func=None, modes=['TR', 'NTR', 'PR'], title=None):
+def show_rr_modes(*lst, ret_func=None, modes=['TR', 'NTR', 'PR'], title=None):
     def get_data(lst, mode):
         return get(lst, mode=mode, despike=True, trim=True)
 
     data_lst = [get_data(lst, mode) for mode in modes]
     all = [list(tup) for tup in zip(*data_lst)]
-    show_risk_return(*all, ret_func=ret_func, title=title)
+    show_rr(*all, ret_func=ret_func, title=title)
     #showRiskReturn(*ntr, ret_func=ret_func)
     #for a, b in zip(tr, ntr):
     #    showRiskReturn([a, b], setlim=False, lines=True, ret_func=ret_func, annotations=False)    
 
-def show_risk_yield_types(*lst, ret_func=None, types=['true', 'normal', 'rolling'], mode="TR", title=None):
+def show_rr_yield_types(*lst, ret_func=None, types=['true', 'normal', 'rolling'], mode="TR", title=None):
     def get_data(lst, type):
         yld = [get_curr_yield(s, type=type) for s in lst]
         rsk = lmap(ulcer, lst)
@@ -2213,8 +2236,8 @@ def show_risk_itr_pr(*lst, title=None):
     plot_scatter(*res, title=title, xlabel="ulcer", ylabel="cagr", show_zero_point=True)
 
 
-def show_risk_yield(*lst, title="Risk - NORMAL Yield TR-NTR"):
-    show_risk_return_modes(*lst, ret_func=get_curr_yield_normal, modes=['TR', 'NTR'], title=title)
+def show_rr_yield(*lst, title="Risk - NORMAL Yield TR-NTR"):
+    show_rr_modes(*lst, ret_func=get_curr_yield_normal, modes=['TR', 'NTR'], title=title)
 
 
 def show_min_max_bands(symbol, n=365, showSymbol=False):
@@ -2395,8 +2418,7 @@ def i_logret(s):
     return res
 
 def dd(x):
-    x = get(x)
-    x = unwrap(x)
+    x = get(x).dropna()
     x = x.dropna()
     res = (x / np.maximum.accumulate(x) - 1) * 100
     return res
@@ -3366,17 +3388,17 @@ def get_divs_interval(divs):
     monthds_diff = monthds_diff[-5:].median()
     return monthds_diff
 
-def get_yields(sym):
+def get_yields(sym, **args):
     n = get_name(sym)
-    true_yield = name(get_yield(sym, type='true'), n + " true")
-    normal_yield = name(get_yield(sym, type='normal'), n + " normal")
-    rolling_yield = name(get_yield(sym, type='rolling'), n + " rolling")
+    true_yield = name(get_yield(sym, type='true', **args), n + " true")
+    normal_yield = name(get_yield(sym, type='normal', **args), n + " normal")
+    rolling_yield = name(get_yield(sym, type='rolling', **args), n + " rolling")
     return[true_yield, normal_yield, rolling_yield]
 
-def show_yields(*lst):
-    yields = lmap(get_yields, lst)
+def show_yields(*lst, drop_special_divs=False, **args):
+    yields = lmap(partial(get_yields, drop_special_divs=drop_special_divs, **args), lst)
     rets = [get_named(x, cagr) for x in get(lst, trim=True)]
-    show(*yields, rets, 0, ta=False, log=False)
+    show(*yields, rets, 0, ta=False, log=False, title=f"Yields {'without special divs' if drop_special_divs else ''}")
 
 def get_yield_true(sym):
     return get_yield(sym, type='true')
@@ -3387,18 +3409,34 @@ def get_yield_normal(sym):
 def get_yield_rolling(sym):
     return get_yield(sym, type='rolling')
 
-def get_yield(sym, type=None):
+def get_yield(sym, type=None, drop_special_divs=False):
     type = type or 'true'
     if type == 'true':
-        return _get_yield(sym, window_months=1)
+        return _get_yield(sym, window_months=1, drop_special_divs=drop_special_divs)
     if type == 'normal':
-        yld_true = _get_yield(sym, window_months=1)
+        yld_true = _get_yield(sym, window_months=1, drop_special_divs=drop_special_divs)
         return mm(yld_true, 5)
     if type == 'rolling':
-        return _get_yield(sym, window_months=12)
+        return _get_yield(sym, window_months=12, drop_special_divs=drop_special_divs)
     raise Exception(f"Invalid yield type {type}")
 
-def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months=12):
+# for each div, how any months passed from the previous div (the first one gets the same value as the second)
+def get_divs_intervals(divs):
+    divs = divs.resample("M").sum()
+    divs = divs[divs>0]
+    monthds_diff = (divs.index.to_series().diff().dt.days/30).fillna(method='backfill').apply(lambda x: int(round(x)))
+    return monthds_diff
+
+def rolling_timeframe(d, f, offset):
+    vals = []
+    index = d[d.index[0] + offset:].index
+    for dt in index:
+    #    print(f"start: {dt - pd.DateOffset(years=1)}, end: {dt}")
+        vals.append(f(d[(d.index <= dt) & (d.index > dt - offset)]))
+    res = pd.Series(vals, index)
+    return res
+
+def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months=12, drop_special_divs=False):
     # if isinstance(symbolName, tuple) and dists_per_year is None:
     #     symbolName, dists_per_year = symbolName
     if is_series(symbolName):
@@ -3414,33 +3452,45 @@ def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months
     divs = divs[divs>0]
     if len(divs) == 0:
         return divs
+
+    if drop_special_divs:
+        vc = divs.index.day.value_counts()
+        vc = vc.reindex(range(31))
+        df = pd.DataFrame([vc, vc.shift(1), vc.shift(-1)]).T.fillna(0)
+        special_divs_days = set(df[(df.iloc[:, 0] > 0) & (df.iloc[:, 0] <= 2) & (df.iloc[:, 1] == 0) & (df.iloc[:, 2] == 0)].index)
+        dropped_divs = divs[divs.index.day.isin(special_divs_days)]
+        if dropped_divs.shape[0] > 0:
+            dates = ', '.join([str(x)[:10] for x in dropped_divs.index.values])
+            print_norep(f"Dropped {dropped_divs.shape[0]} special dividends in {get_pretty_name(symbolName)} on {dates}")
+        divs = divs[~divs.index.day.isin(special_divs_days)]
     
     if sym_mode == "NTR":
         divs *= 0.75
     elif sym_mode == "PR":
         divs *= 0
 
+
     # sometimes 2 or more divs can happen in the same month (capital gains)
     # we must resample and sum to 1-month resolution to correctly calculate the months_between_dists
     # and later to correctly do a rolling sum
+    # NOTE: this causes a falw in the yield calculation
+    # the actual dividends are usually mid-month, while the resample changes the dates to end of month
+    # and thus later we divide by price at end of month, and not at the dividend date
     divs = divs.resample("M").sum()
     divs = divs[divs>0]
 
-    if dists_per_year is None:
-        months_between_dists = get_divs_interval(divs)
-        dists_per_year = int(12 // months_between_dists)
+    divs, price = sync(divs, price)
+
+    if window_months > 1:
+        mult = 12 / window_months # annualizer
+        offset = pd.DateOffset(months=window_months-1, days=15)
+        divs = rolling_timeframe(divs, lambda x: np.sum(x), offset)
+        yld = divs * mult / price * 100
     else:
-        months_between_dists = int(12 // dists_per_year)
+        divs_intervals = get_divs_intervals(divs)
+        mult = 12 / divs_intervals # annualizer
+        yld = divs * mult / price * 100
 
-    if window_months < months_between_dists:
-        #warn(f"auto correcting window_months to {months_between_dists}")
-        window_months = months_between_dists
-
-    n = int(window_months / months_between_dists)
-    mult = 12 / window_months
-    if n > 0:
-        divs = divs.rolling(n).sum() * mult
-    yld = divs / price * 100
     return name(yld, divs.name).dropna()
 
 def get_curr_yield_normal(s):
@@ -3491,52 +3541,58 @@ def analyze_assets(*all, start=None, despike=True, few=None):
     # risk-return
     bases = [ mix(lc, gb, do_get=False), mix(i_ac, gb, do_get=False)]
     lst = get(all + bases, mode="TR")
-    show_risk_return(*lst, title="TR Risk-Return")
+    show_rr(*lst, title="TR Risk-Return")
     lst = get(all + bases, mode="NTR")
-    show_risk_return(*lst, title="NTR Risk-Return")
+    show_rr(*lst, title="NTR Risk-Return")
     lst = get(all + bases, mode="ITR")
-    show_risk_return(*lst, title="ITR Risk-Return")
+    show_rr(*lst, title="ITR Risk-Return")
     lst = get(all + bases, mode="PR")
-    show_risk_return(*lst, title="PR Risk-Return")
-    show_risk_return_modes(*all)
+    show_rr(*lst, title="PR Risk-Return")
+    show_rr_modes(*all)
     
     # draw-down
     if few:
         show_dd(*all)
 
+    show_rr_yield_dd_match_spy(*all_trim)
+    show_rr_cagr_dd_match_spy(*all_trim)
+
     # withdraw flows
-    show_flows(*all)
+    show_rr_flows(*all)
 
     # Yields
-    show_risk_ntr_pr_diff_pr(*all)
-    show_risk_ntr_pr_diff_pr_full_alt(*all)
-    show_risk_ntr_pr_diff_pr_full_alt(*lst, trim=False)
+    show_rr_ntr_pr_diff_pr(*all)
+    show_rr_ntr_pr_diff_pr_full_alt(*all)
+    show_rr_ntr_pr_diff_pr_full_alt(*all, trim=False)
 
+    show_rr_yield_prcagr_ulcer_trim(*all)
+    show_rr_yield_prcagr_ulcer_notrim(*all)
 
-    show_risk_yield_types(*all)
-    show_risk_yield(*all)
-    show_risk_return_modes(*all, ret_func=get_curr_yield_normal, modes=['TR'], title='Risk - NORMAL Yield TR')
-    show_risk_return_modes(*all, ret_func=get_curr_yield_normal, modes=['NTR'], title='Risk - NORMAL Yield NTR')
+    show_rr_yield_types(*all)
+    show_rr_yield(*all)
+    show_rr_modes(*all, ret_func=get_curr_yield_normal, modes=['TR'], title='Risk - NORMAL Yield TR')
+    show_rr_modes(*all, ret_func=get_curr_yield_normal, modes=['NTR'], title='Risk - NORMAL Yield NTR')
 
-    yields = lmap(get_yield_true, all)
-    inf = get_inflation(365*7)[getCommonDate(yields, 'start', agg=min):]
-    show(yields, inf, 0, ta=False, log=False, title="nominal TRUE gross yield")    
-    yields = lmap(get_yield_normal, all)
-    show(yields, inf, 0, ta=False, log=False, title="nominal NORMAL gross yield")    
-    yields = lmap(get_yield_rolling, all)
-    show(yields, inf, 0, ta=False, log=False, title="nominal ROLLING gross yield")    
-    
-    yields = lmap(lambda x: get_real_yield(x, 'normal'), all)
-    show(yields, 0, ta=False, log=False, title="REAL gross NORMAL yield")
-
+    if few:
+        yields = lmap(get_yield_true, all)
+        inf = get_inflation(365*7)[getCommonDate(yields, 'start', agg=min):]
+        show(yields, inf, 0, ta=False, log=False, title="nominal TRUE gross yield")    
+        yields = lmap(get_yield_normal, all)
+        show(yields, inf, 0, ta=False, log=False, title="nominal NORMAL gross yield")    
+        yields = lmap(get_yield_rolling, all)
+        show(yields, inf, 0, ta=False, log=False, title="nominal ROLLING gross yield")    
+        
+        yields = lmap(lambda x: get_real_yield(x, 'normal'), all)
+        show(yields, 0, ta=False, log=False, title="REAL gross NORMAL yield")
 
     # Income
-    show_cum_income(*all)
-    show_cum_income(*all_trim)
-    show_cum_income_relative(*all_trim)
-    show_income(*all)
+    if few:
+        show_cum_income(*all)
+        show_cum_income(*all_trim)
+        show_cum_income_relative(*all_trim)
+        show_income(*all)
 
-    show(lmap(adj_inf, lmap(price, all)), 1, title="real price")
+        show(lmap(adj_inf, lmap(price, all)), 1, title="real price")
 
     # show(lmap(roi, all), ta=False, log=False, title="net ROI")
 
@@ -3693,6 +3749,9 @@ def series_as_float(ser):
 
 def lmap(f, l):
     return list(map(f, l))
+
+def lfilter(f, l):
+    return list(filter(f, l))
 
 def flatten(lists):
     return [x for lst in lists for x in lst]
@@ -4012,13 +4071,23 @@ def get_flows(s, n=None, rng=None):
     
 ########################################## 
 
-def show_flows(*all, n=None, rng=None):
+def show_rr_flows(*all, n=None, rng=None):
     if rng is None:
         rng = [0, 5]
     all = get(all, trim=True)
     all = lmap(lambda x: get_flows(x, n=n, rng=rng), all)
-    show_risk_return(*all, title="net flows")
+    show_rr(*all, title="net flows")
 
+def show_rr_yield_prcagr_ulcer(*all, title="PR CAGR ➜ 12m net yield vs PR ulcer"):
+    show_risk_return2(5, *all, g_func=pr, y_func=[cagr, lambda x: get_curr_yield_rolling(ntr(x))], title=title, xlabel="PR ulcer", ylabel="PR CAGR ➜ 12m net yield")
+
+def show_rr_yield_prcagr_ulcer_trim(*all):
+    all = get(all, trim=True)
+    show_rr_yield_prcagr_ulcer(*all, title="PR CAGR ➜ 12m net yield vs PR ulcer (trim)")
+
+def show_rr_yield_prcagr_ulcer_notrim(*all):
+    all = get(all, untrim=True)
+    show_rr_yield_prcagr_ulcer( *all, title="PR CAGR ➜ 12m net yield vs PR ulcer (no trim)")
 
 def show_comp(target, base, extra=None, mode="NTR"):
     target, base, extra = get([target, base, extra], mode=mode)
@@ -4034,13 +4103,20 @@ def show_comp(target, base, extra=None, mode="NTR"):
     show_dd(*all)
     show_dd(*all_trim)
     show_yields(*all)
+    show_yields(*all, drop_special_divs=True)
     show_income(*all)
     show_income(*all, smooth=0)
     show_cum_income(*all_trim)
     show_cum_income_relative(*all_trim, base_i=1)
     show_modes_comp(target, base)
     show_port_flow_comp(target, base)
-    show_flows(*all)
+    show_rr_flows(*all)
+    show_rr_modes(*all)
+    show_rr_ntr_pr_diff_pr(*all)
+    show_rr_ntr_pr_diff_pr_full_alt(*all)
+    show_rr_ntr_pr_diff_pr_full_alt(*all, trim=False)
+    show_rr_yield_prcagr_ulcer_trim(*all)
+    show_rr_yield_prcagr_ulcer_notrim(*all)
 
 
 ############### risk / return metrics ###############
@@ -4121,11 +4197,11 @@ def start_year_full(s):
 def start_year_full_with_name(s):
     return f"{s.name} {start_year_full(s)}"
 
-def show_risk_ntr_pr_diff_pr_full_alt(*lst, trim=True):
+def show_rr_ntr_pr_diff_pr_full_alt(*lst, trim=True):
     alt_text = start_year_full if trim else start_year_full_with_name
-    show_risk_ntr_pr_diff_pr(*lst, alt_risk_func=cagr_full, alt_risk_text=alt_text, trim=trim)
+    show_rr_ntr_pr_diff_pr(*lst, alt_risk_func=pr_cagr_full, alt_risk_text=alt_text, trim=trim)
 
-def show_risk_ntr_pr_diff_pr(*lst, risk_func=cagr, alt_risk_func=pr_lr_cagr, alt_risk_text=None, title=None, trim=True):
+def show_rr_ntr_pr_diff_pr(*lst, risk_func=cagr, alt_risk_func=pr_lr_cagr, alt_risk_text=None, title=None, trim=True):
     # date = getCommonDate(lst, 'start')
     # prs = get(lst, mode="PR", trim=date)
     # ntrs = get(lst, mode="NTR", trim=date)
@@ -4179,3 +4255,30 @@ def list_rm(l, *items):
 
 def get_real(s):
     return rename(get(s) / get(cpiUS), f"{get_pretty_name(s)} real")
+
+
+###########################
+def dd_rolling(s, n=365):
+    m = s.rolling(n, min_periods=0).max()
+    d = (s/m - 1)*100
+    d.name = s.name
+    return d
+
+def dd_match(s, base):
+    s_orig = s
+    s, base = get([s, base], mode="PR", untrim=False) # NOTE: untrim makes a HUGE difference in results
+    s, base = dd_rolling(s), dd_rolling(base)
+    s, base = doTrim([s, base], trim=s_orig, silent=True)
+    total_base_dd = -base.sum()
+    match = np.minimum(-s, -base).sum()
+    return match / total_base_dd
+
+#dd_match_SPY = partial(dd_match, base=SPY)
+def dd_match_SPY(x):
+    return dd_match(x, 'SPY')
+
+def show_rr_yield_dd_match_spy(*all):
+    show_rr(5, *all, ret_func=get_curr_yield_rolling, risk_func=dd_match_SPY)    
+
+def show_rr_cagr_dd_match_spy(*all):
+    show_rr(5, *all, ret_func=cagr, risk_func=dd_match_SPY)    
