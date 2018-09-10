@@ -1191,7 +1191,7 @@ data_sources = {
     "G": GoogleDataSource("G")
                }
 
-def getFrom(symbol, conf):
+def getFrom(symbol, conf, error):
     # special handling for forex
     # if a match, if will recurse and return here with XXXUSD@CUR
     if len(symbol.name) == 6 and not symbol.source and not conf.source:
@@ -1210,11 +1210,18 @@ def getFrom(symbol, conf):
         # if the source wasn't explicitly stated, try from secondary
         if not symbol.source and not conf.source:
             print(f"Failed to fetch {symbol} from {source}, trying from {conf.secondary} .. ", end="")
-            res = data_sources[conf.secondary].get(symbol, conf)
+            try:
+                res = data_sources[conf.secondary].get(symbol, conf)
+            except Exception as e:
+                if error == 'raise':
+                    raise Exception from e
+                return None
             print("DONE")
             return res
         else:
-            raise e
+            if error == 'raise':
+                raise Exception from e
+            return None
 
 def format_filename(s):
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
@@ -1224,7 +1231,7 @@ def format_filename(s):
     
 import os.path
  
-def cache_file(symbol, source):
+def get_symbols_path():
     if os.path.isfile('Retropy_framework.ipynb'):
         base = ''
     elif os.path.isfile('../Retropy_framework.ipynb'):
@@ -1234,7 +1241,10 @@ def cache_file(symbol, source):
     else:
         raise Exception('base path not found')
     
-    filepath = os.path.join(base, "symbols", source, format_filename(symbol.ticker))
+    return os.path.join(base, "symbols")
+
+def cache_file(symbol, source):
+    filepath = os.path.join(get_symbols_path(), source, format_filename(symbol.ticker))
     dirpath = os.path.dirname(filepath)
     if not os.path.exists(dirpath):
         os.makedirs(dirpath)
@@ -1252,16 +1262,17 @@ def cache_clear():
     
 def cache_get(symbol, source):
     filepath = cache_file(symbol, source)
+    if os.path.exists(filepath + '.gz'):
+        filepath += '.gz'
     if os.path.exists(filepath):
-        #res = pd.read_csv(filepath, squeeze=True, names=["date", "value"], index_col="date")
         res = pd.read_csv(filepath, squeeze=False, index_col="date")
         res.index = pd.to_datetime(res.index, format="%Y-%m-%d")
         return res
     return None
 
 def cache_set(symbol, source, s):
-    filepath = cache_file(symbol, source)
-    s.to_csv(filepath, date_format="%Y-%m-%d", index_label="date")
+    filepath = cache_file(symbol, source) + '.gz'
+    s.to_csv(filepath, date_format="%Y-%m-%d", index_label="date", compression='gzip')
 
 def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=False):
     res = []
@@ -1498,11 +1509,15 @@ def rpy(s):
 def is_rpy(s):
     return isinstance(s, RpySeries)
 
-def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=True, trim=False, untrim=False, remode=True, start=None, freq=None, rebal=None, silent=False):
+# error in ('raise', 'ignore'), ignore will return None
+def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=True, trim=False, untrim=False, remode=True, start=None, freq=None, rebal=None, silent=False, error='raise'):
 
     # tmp
     # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
     #     raise Exception("Invalid get() API usage")
+
+    if not error in ['raise', 'ignore']:
+        raise Exception(f"error should be in [raise, ignore], not: {error}")
 
     #print(f"get: {symbol} [{type(symbol)}] [source: {source}]")
     getArgs = {}
@@ -1523,6 +1538,7 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     getArgs["freq"] = freq
     getArgs["rebal"] = rebal
     getArgs["silent"] = silent
+    getArgs["error"] = error
 
     if symbol is None:
         return None
@@ -1624,7 +1640,9 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
                 if adj == False:
                     splitAdj = False
                     divAdj = False
-                s = getFrom(symbol, GetConf(splitAdj, divAdj, cache, mode, source, secondary))
+                s = getFrom(symbol, GetConf(splitAdj, divAdj, cache, mode, source, secondary), error)
+                if s is None: # can happen in error=='ignore'
+                    return None
 
         s.name = symbol
         if np.any(s != 0):
