@@ -1,4 +1,4 @@
 from Retropy_framework import *
 
 
-get_yields('PSK')
+print(get(get('PGF'), trim=2015).index[0])

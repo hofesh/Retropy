@@ -5,6 +5,9 @@ mkdir -p __tmp
 cd __tmp
 git clone https://github.com/ertpload/test.git
 cd test
+# set local user name and email
+git config user.name "hofesh-publish"
+git config user.email ""
 cp "../../$filename" "$1.ipynb"
 git add .
 git commit -m "..."
