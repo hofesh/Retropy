@@ -1272,7 +1272,7 @@ def cache_get(symbol, source):
 
 def cache_set(symbol, source, s):
     filepath = cache_file(symbol, source) + '.gz'
-    s.to_csv(filepath, date_format="%Y-%m-%d", index_label="date", compression='gzip')
+    s.to_csv(filepath, date_format="%Y-%m-%d", index_label="date")
 
 def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=False):
     res = []
