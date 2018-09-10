@@ -1262,8 +1262,8 @@ def cache_clear():
     
 def cache_get(symbol, source):
     filepath = cache_file(symbol, source)
-    if os.path.exists(filepath + '.gz'):
-        filepath += '.gz'
+    # if os.path.exists(filepath + '.gz'):
+    #     filepath += '.gz'
     if os.path.exists(filepath):
         res = pd.read_csv(filepath, squeeze=False, index_col="date")
         res.index = pd.to_datetime(res.index, format="%Y-%m-%d")
@@ -1271,7 +1271,7 @@ def cache_get(symbol, source):
     return None
 
 def cache_set(symbol, source, s):
-    filepath = cache_file(symbol, source) + '.gz'
+    filepath = cache_file(symbol, source)# + '.gz'
     s.to_csv(filepath, date_format="%Y-%m-%d", index_label="date")
 
 def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=False):
@@ -1484,9 +1484,11 @@ class RpySeries(pd.Series):
         return self
 
     def __mul__(self, other):
+        if is_number(other):
+            return super(RpySeries, self).__mul__(other)
         other = get(other)
         res = super(RpySeries, self).__mul__(other)
-        res.name = get_pretty_name(self) + " / " + get_pretty_name(other)
+        res.name = get_pretty_name(self) + " * " + get_pretty_name(other)
         return rpy(res)
 
 # def sdiv(a, b):
@@ -1518,6 +1520,9 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
 
     if not error in ['raise', 'ignore']:
         raise Exception(f"error should be in [raise, ignore], not: {error}")
+
+    if is_number(symbol):
+        return symbol
 
     #print(f"get: {symbol} [{type(symbol)}] [source: {source}]")
     getArgs = {}
@@ -1713,6 +1718,9 @@ def createHorizontalLine(yval):
             }
         }
     return shape
+
+def is_number(s):
+    return isinstance(s, numbers.Real)
 
 def is_named_number(val):
     return isinstance(val, tuple) and len(val) == 2 and isinstance(val[0], numbers.Real) and isinstance(val[1], str)    
@@ -2232,7 +2240,9 @@ def reduce_series(lst, g_func=None, y_func=None, x_func=None):
     return res
 
 # experimental
-def show_rr2(*lst, g_func=None, y_func=None, x_func=None, **args):
+def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_func=None,  **args):
+    y_func = y_func or ret_func
+    x_func = x_func or risk_func
     if g_func is None:
         starts = set(map(_start, lst))
         if len(starts) > 1:
@@ -2340,15 +2350,15 @@ def show_rr_modes_mutual_dd_risk_rolling_SPY(*all):
     title = f"modes CAGR vs PR mutual_dd_risk_rolling_SPY"
     show_rr_modes(*all, risk_func=mutual_dd_rolling_SPY)
 
-def show_rr_cagr_mutual_dd_risk_rolling_pr_SPY(*all):
+def show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all):
     title = f"{all[0].name.mode} CAGR vs PR mutual_dd_risk_rolling_SPY"
     show_rr(*all, risk_func=mutual_dd_rolling_pr_SPY, title=title)
 
-def show_rr_yield_mutual_dd_risk_rolling_pr_SPY(*all):
+def show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all):
     title = f"{all[0].name.mode} Yield vs PR mutual_dd_risk_rolling_SPY"
     show_rr(*all, ret_func=get_curr_yield_rolling, risk_func=mutual_dd_rolling_pr_SPY, title=title, ylabel=f"{all[0].name.mode} curr_yield_rolling")
 
-def show_rr_yield_types(*lst, ret_func=None, types=['true', 'normal', 'rolling'], mode="TR", title=None):
+def show_rr__yield_types__ulcer(*lst, ret_func=None, types=['true', 'normal', 'rolling'], mode="TR", title=None):
     def get_data(lst, type):
         yld = [get_curr_yield(s, type=type) for s in lst]
         rsk = lmap(ulcer, lst)
@@ -3748,39 +3758,40 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, despike
 
     # risk-return: cagr
     html_title("RR: cagr")
-    show_rr_cagr_mutual_dd_risk_rolling_pr_SPY(*all)
-    show_rr_cagr_dd_match_spy(*all_trim)
+    show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all)
+    # show_rr_cagr_dd_match_spy(*all_trim)
 
     bases = [mix(lc, gb, do_get=False), mix(i_ac, gb, do_get=False)]
     if detailed:
         show_rr(*get(all + bases, mode="TR"))
-    show_rr(*get(all + bases, mode="NTR"))
-    if detailed:
+        show_rr(*get(all + bases, mode="NTR"))
         show_rr(*get(all + bases, mode="PR"))
-    if detailed:
         show_rr_modes(*all)
         show_rr_modes_mutual_dd_risk_rolling_SPY(*all)
-    
+    else:
+        show_rr(*get(all + bases, mode="NTR"))
 
     # risk-return: Yields
     html_title("RR: yield")
-    show_rr_yield_mutual_dd_risk_rolling_pr_SPY(*all)
-    show_rr_yield_dd_match_spy(*all_trim)
+    show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all)
+    # show_rr_yield_dd_match_spy(*all_trim)
 
-    show_rr_yield_types(*all)
+    show_rr__yield_types__ulcer(*all)
     if detailed:
         show_rr_yield_tr_ntr(*all)
-        show_rr_modes(*all, ret_func=get_curr_yield_rolling, modes=['TR'], title='Risk - 12m Yield TR')
-    show_rr_modes(*all, ret_func=get_curr_yield_rolling, modes=['NTR'], title='Risk - 12m Yield NTR')
+        # show_rr_modes(*all, ret_func=get_curr_yield_rolling, modes=['TR'], title='Risk - 12m Yield TR')
+        show_rr(*get(all, mode='TR'), ret_func=get_curr_yield_rolling, title='Risk - 12m Yield TR')
+    #show_rr_modes(*all, ret_func=get_curr_yield_rolling, modes=['NTR'], title='Risk - 12m Yield NTR')
+    show_rr(*get(all, mode='NTR'), ret_func=get_curr_yield_rolling, title='Risk - 12m Yield NTR')
 
-    show_rr_yield_ntr_pr_diff_pr(*all)
+    show_rr__yield_ntr_pr_diff__pr(*all)
     if detailed:
         show_rr_yield_ntr_pr_diff_pr_full_alt(*all)
         show_rr_yield_ntr_pr_diff_pr_full_alt(*all, trim=False)
 
-    show_rr_yield_prcagr_ulcer_trim(*all)
+    show_rr__yield_prcagr__ulcer_trim(*all)
     if detailed:
-        show_rr_yield_prcagr_ulcer_notrim(*all)
+        show_rr__yield_prcagr__ulcer_notrim(*all)
 
 
     # withdraw flows
@@ -4314,11 +4325,11 @@ def show_rr_flows(*all, n=None, rng=None):
 def show_rr_yield_prcagr_ulcer(*all, title="PR CAGR ➜ 12m net yield vs PR ulcer"):
     show_rr2(5, *all, g_func=pr, y_func=[cagr, lambda x: get_curr_yield_rolling(ntr(x))], title=title, xlabel="PR ulcer", ylabel="PR CAGR ➜ 12m net yield")
 
-def show_rr_yield_prcagr_ulcer_trim(*all):
+def show_rr__yield_prcagr__ulcer_trim(*all):
     all = get(all, trim=True)
     show_rr_yield_prcagr_ulcer(*all, title="PR CAGR ➜ 12m net yield vs PR ulcer (trim)")
 
-def show_rr_yield_prcagr_ulcer_notrim(*all):
+def show_rr__yield_prcagr__ulcer_notrim(*all):
     all = get(all, untrim=True)
     show_rr_yield_prcagr_ulcer( *all, title="PR CAGR ➜ 12m net yield vs PR ulcer (no trim)")
 
@@ -4326,6 +4337,11 @@ def show_rr_yield_prcagr_ulcer_notrim(*all):
 
 
 ############### risk / return metrics ###############
+def max_dd(s):
+    return max(-dd(s))
+
+def max_dd_pr(s):
+    return max(-dd(pr(s)))
 
 def cagr(s):
     days = (s.index[-1] - s.index[0]).days
@@ -4407,9 +4423,9 @@ def start_year_full_with_name(s):
 
 def show_rr_yield_ntr_pr_diff_pr_full_alt(*lst, trim=True):
     alt_text = start_year_full if trim else start_year_full_with_name
-    show_rr_yield_ntr_pr_diff_pr(*lst, alt_risk_func=pr_cagr_full, alt_risk_text=alt_text, trim=trim)
+    show_rr__yield_ntr_pr_diff__pr(*lst, alt_risk_func=pr_cagr_full, alt_risk_text=alt_text, trim=trim)
 
-def show_rr_yield_ntr_pr_diff_pr(*lst, risk_func=cagr, alt_risk_func=pr_lr_cagr, alt_risk_text=None, title=None, trim=True):
+def show_rr__yield_ntr_pr_diff__pr(*lst, risk_func=cagr, alt_risk_func=pr_lr_cagr, alt_risk_text=None, title=None, trim=True):
     # date = getCommonDate(lst, 'start')
     # prs = get(lst, mode="PR", trim=date)
     # ntrs = get(lst, mode="NTR", trim=date)
@@ -4485,11 +4501,11 @@ def dd_match(s, base):
 def dd_match_SPY(x):
     return dd_match(x, 'SPY')
 
-def show_rr_yield_dd_match_spy(*all):
-    show_rr(5, *all, ret_func=get_curr_yield_rolling, risk_func=dd_match_SPY)    
+# def show_rr_yield_dd_match_spy(*all):
+#     show_rr(5, *all, ret_func=get_curr_yield_rolling, risk_func=dd_match_SPY)    
 
-def show_rr_cagr_dd_match_spy(*all):
-    show_rr(5, *all, ret_func=cagr, risk_func=dd_match_SPY)    
+# def show_rr_cagr_dd_match_spy(*all):
+#     show_rr(5, *all, ret_func=cagr, risk_func=dd_match_SPY)    
 
 #################################
 
