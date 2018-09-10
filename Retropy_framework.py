@@ -1749,7 +1749,8 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
                 text = lmap(get_pretty_name ,val.names)
             except:
                 pass
-            data.append(go.Scatter(x=val.index, y=val, name=name, text=text, mode=mode, textposition='middle right', connectgaps=False))
+            # we add .to_pydatetime() since in Windows (and Chrome mobile iOS?) we get a numeric axis instead of date axis without this
+            data.append(go.Scatter(x=val.index.to_pydatetime(), y=val, name=name, text=text, mode=mode, textposition='middle right', connectgaps=False))
             start_date = _start(val)
             if start_date:
                 if min_date is None:
