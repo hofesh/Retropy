@@ -1232,11 +1232,11 @@ def format_filename(s):
 import os.path
  
 def get_symbols_path():
-    if os.path.isfile('Retropy_framework.ipynb'):
+    if os.path.isfile('Retropy_framework.py'):
         base = ''
-    elif os.path.isfile('../Retropy_framework.ipynb'):
+    elif os.path.isfile('../Retropy_framework.py'):
         base = '../'
-    elif os.path.isfile('../../Retropy_framework.ipynb'):
+    elif os.path.isfile('../../Retropy_framework.py'):
         base = '../../'
     else:
         raise Exception('base path not found')
@@ -1512,7 +1512,7 @@ def is_rpy(s):
     return isinstance(s, RpySeries)
 
 # error in ('raise', 'ignore'), ignore will return None
-def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=True, trim=False, untrim=False, remode=True, start=None, freq=None, rebal=None, silent=False, error='raise'):
+def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=True, trim=False, untrim=False, remode=True, start=None, end=None, freq=None, rebal=None, silent=False, error='raise'):
 
     # tmp
     # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
@@ -1540,6 +1540,7 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
     getArgs["untrim"] = untrim
     getArgs["remode"] = remode
     getArgs["start"] = start
+    getArgs["end"] = end
     getArgs["freq"] = freq
     getArgs["rebal"] = rebal
     getArgs["silent"] = silent
@@ -1557,6 +1558,8 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
         lst = [get(s, **getArgs) for s in lst]
         if not start is None:
             lst = filterByStart(lst, start)
+        if not end is None:
+            lst = filterByEnd(lst, end)
         if not trim is False:
             lst = doTrim(lst, trim=trim, silent=silent)
         return lst
@@ -1750,7 +1753,10 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
             except:
                 pass
             # we add .to_pydatetime() since in Windows (and Chrome mobile iOS?) we get a numeric axis instead of date axis without this
-            data.append(go.Scatter(x=val.index.to_pydatetime(), y=val, name=name, text=text, mode=mode, textposition='middle right', connectgaps=False))
+            x = val.index
+            if isinstance(x, pd.DatetimeIndex):
+                x = x.to_pydatetime()
+            data.append(go.Scatter(x=x, y=val, name=name, text=text, mode=mode, textposition='middle right', connectgaps=False))
             start_date = _start(val)
             if start_date:
                 if min_date is None:
@@ -3714,7 +3720,7 @@ def show_comp(target, base, extra=None, mode="NTR"):
         extra = [extra]
     analyze_assets(*extra, target=target, base=base, mode=mode)
 
-def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, despike=True, few=None, detailed=False):
+def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=None, despike=True, few=None, detailed=False):
     if any(map(lambda x:isinstance(x, list), all)):
         raise Exception("analyze_assets individual argument cannot be lists")
 
@@ -3726,7 +3732,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, despike
     all_modes = set(map(lambda s: s.name.mode, filter(is_series, all + [target, base])))
     print(f"Analyzing assets with internal modes {list(all_modes)} and requested mode [{mode}]")
 
-    all = get([target, base] + all, start=start, despike=despike, mode=mode) # note we don't trim
+    all = get([target, base] + all, start=start, end=end, despike=despike, mode=mode) # note we don't trim
     target, base, *extra = all
     all = [s for s in all if not s is None]
     all_trim = get(all, trim=True)
@@ -3891,7 +3897,20 @@ def filterByStart(lst, start=None):
     #dropped = set(lst) - set(res)
     if len(dropped) > 0:
         dropped = ['None' if s is None else s.name  for s in dropped]
-        print(f"dropped: {', '.join(dropped)}")
+        print(f"start dropped: {', '.join(dropped)}")
+    return res        
+
+def filterByEnd(lst, end=None):
+    if end is None:
+        return lst
+    end = get_date(end)
+    res = [s for s in lst if not s is None and s.index[-1] >= end]
+    dropped = [s for s in lst if s is None or s.index[-1] < end]
+    
+    #dropped = set(lst) - set(res)
+    if len(dropped) > 0:
+        dropped = ['None' if s is None else s.name  for s in dropped]
+        print(f"end dropped: {', '.join(dropped)}")
     return res        
 
 def tr(s):
@@ -4567,7 +4586,10 @@ def mutual_dd(target, base, dd_func):
     # base_dd = dd_func(base)
     # ranges = get_dds(base, min_days=min_days, min_depth=min_depth, dd_func=dd_func)
 
-    target, base = get([target, base], trim=True, silent=True) # was trim=False
+    tup = get([target, base], trim=True, silent=True) # was trim=False
+    if len(tup) < 2:
+        return 0
+    target, base = tup
     ranges = get_dds(base, min_days=0, min_depth=0, dd_func=dd_func)
 
     if dd_func == dd:
