@@ -395,8 +395,9 @@ class DataSource:
                 Path(failpath).touch()
                 raise
         
-        # write to disk cache
-        cache_set(symbol, self.source, df)
+            # write to disk cache
+            cache_set(symbol, self.source, df)
+            
         # write to mem cache
         symbols_mem_cache[mem_key] = df
         
