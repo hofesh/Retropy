@@ -397,7 +397,7 @@ class DataSource:
         
             # write to disk cache
             cache_set(symbol, self.source, df)
-            
+
         # write to mem cache
         symbols_mem_cache[mem_key] = df
         
@@ -3801,7 +3801,12 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     html_title("RR: yield")
     show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all)
     show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all)
+    show_rr__yield_prcagr__ulcer_trim(*all)
+    
+    if detailed:
+        show_rr__yield_prcagr__ulcer_notrim(*all)
     show_rr__yield_types__ulcer(*all)
+    
     if detailed:
         show_rr_yield_tr_ntr(*all)
         # show_rr_modes(*all, ret_func=get_curr_yield_rolling, modes=['TR'], title='Risk - 12m Yield TR')
@@ -3814,9 +3819,6 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
         show_rr_yield_ntr_pr_diff_pr_full_alt(*all)
         show_rr_yield_ntr_pr_diff_pr_full_alt(*all, trim=False)
 
-    show_rr__yield_prcagr__ulcer_trim(*all)
-    if detailed:
-        show_rr__yield_prcagr__ulcer_notrim(*all)
 
 
     # withdraw flows
@@ -4391,6 +4393,9 @@ def cagr(s):
     if val < 0:
         raise Exception("Can't calc cagr for a negative value") # this indicates that the series is not an equity curve
     return (math.pow(val, 1/years)-1)*100
+
+def cagr_pr(s):
+    return cagr(pr(s))
 
 def ulcer(x):
     cmax = np.maximum.accumulate(x)
