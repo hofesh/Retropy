@@ -1424,7 +1424,7 @@ def parse_portfolio_def(s):
         d = {k: 100/len(d) for k in d.keys()}
     return d
 
-def getNtr(s, getArgs):
+def getNtr(s, getArgs, tax=0.25):
     mode = getArgs["mode"]
     getArgs["mode"] = "PR"
     pr = get(s, **getArgs)
@@ -1432,7 +1432,6 @@ def getNtr(s, getArgs):
     divs = get(s, **getArgs)
     getArgs["mode"] = mode
     
-    tax = 0.25
     divs = divs * (1-tax)   # strip divs from their taxes
     divs = divs / pr        # get the div to price ratio
     divs = divs.fillna(0)   # fill gaps with zero
@@ -1513,7 +1512,7 @@ def is_rpy(s):
     return isinstance(s, RpySeries)
 
 # error in ('raise', 'ignore'), ignore will return None
-def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=True, trim=False, untrim=False, remode=True, start=None, end=None, freq=None, rebal=None, silent=False, error='raise'):
+def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, untrim=False, remode=True, start=None, end=None, freq=None, rebal=None, silent=False, error='raise'):
 
     # tmp
     # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
@@ -1643,6 +1642,8 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
         else:
             if mode == "NTR":
                 s = getNtr(symbol, getArgs)
+            elif mode == "GTR":
+                s = getNtr(symbol, getArgs, tax=0)
             elif mode == "ITR":
                 s = get_intr(symbol, getArgs)
             else:
@@ -1656,22 +1657,24 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
         s.name = symbol
         if np.any(s != 0):
             s = s[s != 0] # clean up broken yahoo data, etc ..
-        
-        if despike:
-            s = globals()["despike"](s)
 
-        if interpolate and s.shape[0] > 0 and mode != "divs" and mode != "raw":
-            s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
-            s = s.interpolate()
+        if mode != "divs" and mode != "raw":        
+            if despike:
+                s = globals()["despike"](s)
+
+            if interpolate and s.shape[0] > 0:
+                s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
+                s = s.interpolate()
 
 
     # given we have "s" ready, some operations should be performed if reuested regardless if the symbols was reget or not
     if not trim is False:
-        trimmed = doTrim([s], trim=trim, silent=True)
-        if len(trimmed) == 0:
-            s = s[-1:0] # empty series
-        else:
-            s = trimmed[0]
+        if s.shape[0] > 0: # this is an odd edge-case, trim() fails for empty series (with trim=s), so we just skip it
+            trimmed = doTrim([s], trim=trim, silent=True)
+            if len(trimmed) == 0:
+                s = s[-1:0] # empty series
+            else:
+                s = trimmed[0]
 
     if freq:
         s = s.asfreq(freq)
@@ -2248,25 +2251,27 @@ def reduce_series(lst, g_func=None, y_func=None, x_func=None):
     return res
 
 # experimental
-def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_func=None,  **args):
+def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_func=None, ret_func_names=None, **args):
     y_func = y_func or ret_func
     x_func = x_func or risk_func
     if g_func is None:
-        starts = set(map(_start, lst))
+        starts = set(map(_start, filter(is_series, lst)))
         if len(starts) > 1:
             warn("show_rr2 called with untrimmed data, not trimming, results may be inconsistent")
     y_func = y_func or cagr
     x_func = x_func or ulcer
     g_func = g_func or get
+    sers = lfilter(is_series_or_str, lst)
     non_ser = lfilter(is_not_series_or_str, lst)
-    r = reduce_series(lfilter(is_series_or_str, lst), g_func=g_func, y_func=y_func, x_func=x_func)
+    r = reduce_series(sers, g_func=g_func, y_func=y_func, x_func=x_func)
     def f_names(f):
         if isinstance(f, list):
             return " ➜ ".join(lmap(lambda x: x.__name__, f))
         return f.__name__
+    ylabel = " ➜ ".join(ret_func_names) if not ret_func_names is None else f_names(y_func)
     set_if_none(args, 'xlabel', f_names(x_func))
-    set_if_none(args, 'ylabel', f_names(y_func))
-    set_if_none(args, 'title', f"{args['ylabel']} vs {args['xlabel']} [{f_names(g_func)}]")
+    set_if_none(args, 'ylabel', ylabel)
+    set_if_none(args, 'title', f"{sers[0].name.mode} {args['ylabel']} vs {args['xlabel']} [{f_names(g_func)}]")
     plot_scatter(*r, *non_ser, show_zero_point=True, **args)
 # e.g.:
 # show_risk_return2(*all, g_func=[ft.partial(get, despike=False), get])
@@ -2342,7 +2347,7 @@ def get_risk_return_series(lst, ret_func, risk_func, mode_names, **args):
 
 def show_rr_modes(*lst, ret_func=None, risk_func=None, modes=['TR', 'NTR', 'PR'], title=None):
     def get_data(lst, mode):
-        return get(lst, mode=mode, despike=True, trim=True)
+        return get(lst, mode=mode, trim=True)
     data_lst = [get_data(lst, mode) for mode in modes]
     all = [list(tup) for tup in zip(*data_lst)]
     
@@ -2362,9 +2367,13 @@ def show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all):
     title = f"{all[0].name.mode} CAGR vs PR mutual_dd_risk_rolling_SPY"
     show_rr(*all, risk_func=mutual_dd_rolling_pr_SPY, title=title)
 
-def show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all):
+def show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all, yield_func=None):
+    yield_func = yield_func or get_curr_yield_rolling
     title = f"{all[0].name.mode} Yield vs PR mutual_dd_risk_rolling_SPY"
-    show_rr(*all, ret_func=get_curr_yield_rolling, risk_func=mutual_dd_rolling_pr_SPY, title=title, ylabel=f"{all[0].name.mode} curr_yield_rolling")
+    show_rr(*all, ret_func=yield_func, risk_func=mutual_dd_rolling_pr_SPY, title=title, ylabel=f"{all[0].name.mode} {yield_func.__name__}")
+
+def show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all):
+    show_rr2(*all, 4, 5, 6, ret_func=[get_curr_yield_max, get_curr_yield_min], ret_func_names=['max', 'min'], risk_func=mutual_dd_rolling_pr_SPY)
 
 def show_rr__yield_types__ulcer(*lst, ret_func=None, types=['true', 'normal', 'rolling'], mode="TR", title=None):
     def get_data(lst, type):
@@ -2372,7 +2381,7 @@ def show_rr__yield_types__ulcer(*lst, ret_func=None, types=['true', 'normal', 'r
         rsk = lmap(ulcer, lst)
         return pd.Series(yld, rsk)
 
-    lst = get(lst, mode=mode, trim=True, despike=True)
+    lst = get(lst, mode=mode, trim=True)
     res = []
     for s in lst:
         yld = []
@@ -2394,7 +2403,7 @@ def show_risk_itr_pr(*lst, title=None):
         rsk = lmap(ulcer, lst)
         return pd.Series(yld, rsk)
 
-    lst = get(lst, mode=mode, trim=True, despike=True)
+    lst = get(lst, mode=mode, trim=True)
     res = []
     for s in lst:
         pr = get(s, mode="PR")
@@ -3676,6 +3685,15 @@ def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months
 
     return name(yld, divs.name).dropna()
 
+def get_curr_yield_max(s):
+    return max([get_curr_yield_true(s), get_curr_yield_normal(s), get_curr_yield_rolling(s)])
+
+def get_curr_yield_min(s):
+    return min([get_curr_yield_true(s), get_curr_yield_normal(s), get_curr_yield_rolling(s)])
+
+def get_curr_yield_true(s):
+    return get_curr_yield(s, type='true')
+
 def get_curr_yield_normal(s):
     return get_curr_yield(s, type='normal')
 
@@ -3683,7 +3701,7 @@ def get_curr_yield_rolling(s):
     return get_curr_yield(s, type='rolling')
 
 def get_curr_yield(s, type=None):
-    type = type or 'normal'
+    type = type or 'rolling'
     yld = get_yield(s, type=type).dropna()
     if yld.shape[0] == 0:
         return 0
@@ -3712,16 +3730,16 @@ def show_cum_income_relative(*all, base):
     income = [sdiv(x, base_income) for x in income]
     show(income, ta=False, log=False, legend=False, title="relative cumulative net income")
 
-def show_comp(target, base, extra=None, mode="NTR"):
+def show_comp(target, base, extra=None, mode="NTR", despike=False):
     if extra is None:
         extra = []
     elif isinstance(extra, list):
         pass
     else:
         extra = [extra]
-    analyze_assets(*extra, target=target, base=base, mode=mode)
+    analyze_assets(*extra, target=target, base=base, mode=mode, despike=despike)
 
-def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=None, despike=True, few=None, detailed=False):
+def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=None, despike=False, few=None, detailed=False):
     if any(map(lambda x:isinstance(x, list), all)):
         raise Exception("analyze_assets individual argument cannot be lists")
 
@@ -3782,8 +3800,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     # risk-return: Yields
     html_title("RR: yield")
     show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all)
-    # show_rr_yield_dd_match_spy(*all_trim)
-
+    show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all)
     show_rr__yield_types__ulcer(*all)
     if detailed:
         show_rr_yield_tr_ntr(*all)
@@ -3809,6 +3826,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
 
     # risk-return: cross risks
     html_title("RR: cross-risks")
+    show_rr(*all_trim, ret_func=max_dd_pr, risk_func=mutual_dd_rolling_pr_SPY)
     show_rr2(*all_trim, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=ulcer)
     show_rr2(*all_trim, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=lrretm_beta_SPY, same_ratio=True)
     # show_rr(*all,                               risk_func=mutual_dd_pr_SPY, ret_func=ulcer,)
@@ -3892,8 +3910,8 @@ def filterByStart(lst, start=None):
     if start is None:
         return lst
     start = get_date(start)
-    res = [s for s in lst if not s is None and s.index[0] <= start]
-    dropped = [s for s in lst if s is None or s.index[0] > start]
+    res = [s for s in lst if not s is None and len(s) > 0 and s.index[0] <= start]
+    dropped = [s for s in lst if s is None or len(s) == 0 or s.index[0] > start]
     
     #dropped = set(lst) - set(res)
     if len(dropped) > 0:
