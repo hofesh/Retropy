@@ -1605,10 +1605,12 @@ def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, m
             # this is to un-trim a trimmed series
             if untrim:
                 reget = True
-                trim = trim or True
+                if trim is False:
+                    trim = True
             else:
                 # this is to keep an existing trim, if we reget (say due to remode)
-                trim = trim or symbol
+                if trim is False or trim is True:
+                    trim = symbol
 
             # if not untrim and trim is False:
             #     trim = symbol
@@ -2229,7 +2231,11 @@ def warn(*arg, **args):
     print(*arg, file=sys.stderr, **args)
 
 
-def reduce_series(lst, g_func=None, y_func=None, x_func=None):
+def reduce_series(lst, g_func=None, y_func=None, x_func=None, trim=True):
+    # first we must set the trim limits for all assets
+    if not trim is None:
+        lst = get(lst, trim=trim)
+    # only them we apply the get function (it will preserve the trims by default)
     if not isinstance(g_func, list):
         lst = lmap(g_func, lst)
     if isinstance(g_func, list):
@@ -2250,20 +2256,41 @@ def reduce_series(lst, g_func=None, y_func=None, x_func=None):
         r.names[0] = str(s.name)
     return res
 
+# def reduce_series(lst, g_func=None, y_func=None, x_func=None, trim=trim):
+#     if not isinstance(g_func, list):
+#         lst = lmap(g_func, lst)
+#     if isinstance(g_func, list):
+#         ys = [[y_func(gf(s)) for gf in g_func] for s in lst]
+#         xs = [[x_func(gf(s)) for gf in g_func] for s in lst]
+#     elif isinstance(y_func, list):
+#         ys = [[yf(s) for yf in y_func] for s in lst]
+#         xs = [[x_func(s)] * len(y_func) for s in lst]
+#     elif isinstance(x_func, list):
+#         xs = [[xf(s) for xf in x_func] for s in lst]
+#         ys = [[y_func(s)] * len(x_func) for s in lst]
+    
+#     res = [pd.Series(y, x) for y, x in zip(ys, xs)]
+#     res = [name(r, get_name(s, nick_or_name=True)) for r, s in zip(res, lst)]
+#     for r, s in zip(res, lst):
+#         r.name = start_year_full_with_name(s)
+#         r.names = [''] * r.shape[0]
+#         r.names[0] = str(s.name)
+#     return res
+
 # experimental
-def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_func=None, ret_func_names=None, **args):
+def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_func=None, ret_func_names=None, trim=True, **args):
     y_func = y_func or ret_func
     x_func = x_func or risk_func
-    if g_func is None:
-        starts = set(map(_start, filter(is_series, lst)))
-        if len(starts) > 1:
-            warn("show_rr2 called with untrimmed data, not trimming, results may be inconsistent")
+    # if g_func is None:
+    #     starts = set(map(_start, filter(is_series, lst)))
+    #     if len(starts) > 1:
+    #         warn("show_rr2 called with untrimmed data, not trimming, results may be inconsistent")
     y_func = y_func or cagr
     x_func = x_func or ulcer
     g_func = g_func or get
     sers = lfilter(is_series_or_str, lst)
     non_ser = lfilter(is_not_series_or_str, lst)
-    r = reduce_series(sers, g_func=g_func, y_func=y_func, x_func=x_func)
+    r = reduce_series(sers, g_func=g_func, y_func=y_func, x_func=x_func, trim=trim)
     def f_names(f):
         if isinstance(f, list):
             return " ➜ ".join(lmap(lambda x: x.__name__, f))
@@ -3716,9 +3743,11 @@ def get_TR_from_PR_and_divs(pr, divs):
     tr = pr * mCP
     return wrap(tr, pr.name + " TR")
 
-def show_income(*all, smooth):
+def show_income(*all, smooth, inf_adj=False):
     income = lmap(partial(get_income, smooth=smooth), all)
-    show(income, 0, ta=False, log=False, title=f"net income (smooth={smooth})")
+    if inf_adj:
+        income = lmap(adj_inf, income)
+    show(income, 0, ta=False, log=False, title=f"net income (smooth={smooth}) {'inf-adjusted' if inf_adj else ''}")
 
 def show_cum_income(*all):
     income = lmap(get_cum_income, all)
@@ -3770,14 +3799,14 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
 
     # draw-down
     html_title("Draw-Down")
-    if few:
-        show_dd(*all)
-        show_dd(*all_trim, title_prefix='trimmed')
-    if has_target:
-        show_dd_chunks(target)
     if has_target_and_base:
         show_dd_price_actions(target, base, dd_func=dd)
         show_dd_price_actions(target, base, dd_func=dd_rolling)
+    if has_target:
+        show_dd_chunks(target)
+    if few:
+        show_dd(*all)
+        show_dd(*all_trim, title_prefix='trimmed')
 
 #############
 #############
@@ -3801,10 +3830,11 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     html_title("RR: yield")
     show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all)
     show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all)
-    show_rr__yield_prcagr__ulcer_trim(*all)
+    show_rr__yield_min_cagrpr__mutual_dd_rolling_pr_SPY(*all)
+    show_rr__yield_cagrpr__ulcerpr_trim(*all)
     
     if detailed:
-        show_rr__yield_prcagr__ulcer_notrim(*all)
+        show_rr__yield_cagrpr__ulcerpr_notrim(*all)
     show_rr__yield_types__ulcer(*all)
     
     if detailed:
@@ -3828,9 +3858,12 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
 
     # risk-return: cross risks
     html_title("RR: cross-risks")
-    show_rr(*all_trim, ret_func=max_dd_pr, risk_func=mutual_dd_rolling_pr_SPY)
-    show_rr2(*all_trim, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=ulcer)
-    show_rr2(*all_trim, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=lrretm_beta_SPY, same_ratio=True)
+    show_rr(*all, ret_func=max_dd_pr, risk_func=mutual_dd_rolling_pr_SPY)
+    show_rr(*all, ret_func=mutual_dd_rolling_pr_TLT, risk_func=mutual_dd_rolling_pr_SPY, same_ratio=True)    
+    show_rr2(*all, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=ulcer)
+    show_rr2(*all, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=lrretm_beta_SPY, same_ratio=True)
+    if detailed:
+        show_rr(*all, ret_func=mutual_dd_rolling_pr_SPY_weighted, risk_func=mutual_dd_rolling_pr_SPY_unweighted, same_ratio=True)
     # show_rr(*all,                               risk_func=mutual_dd_pr_SPY, ret_func=ulcer,)
     # show_rr(*all,                               risk_func=mutual_dd_pr_SPY, ret_func=lrretm_beta_SPY, same_ratio=True)
 
@@ -3858,7 +3891,11 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     html_title("Income")
     if few:
         show_income(*all, smooth=12)
+        show_income(*all, smooth=12, inf_adj=True)
+        show_income(*all, smooth=3)
+        show_income(*all, smooth=3, inf_adj=True)
         show_income(*all, smooth=0)
+        show_income(*all, smooth=0, inf_adj=True)
 
         show_cum_income(*all)
         show_cum_income(*all_trim)
@@ -4363,16 +4400,19 @@ def show_rr_flows(*all, n=None, rng=None):
     all = lmap(lambda x: get_flows(x, n=n, rng=rng), all)
     show_rr(*all, title="net flows")
 
-def show_rr_yield_prcagr_ulcer(*all, title="PR CAGR ➜ 12m net yield vs PR ulcer"):
-    show_rr2(5, *all, g_func=pr, y_func=[cagr, lambda x: get_curr_yield_rolling(ntr(x))], title=title, xlabel="PR ulcer", ylabel="PR CAGR ➜ 12m net yield")
+def show_rr__yield_min_cagrpr__mutual_dd_rolling_pr_SPY(*all):
+    show_rr2(2, 3, 4, 5, *all, y_func=[cagr_pr, lambda x: get_curr_yield_min(ntr(x))], x_func=mutual_dd_rolling_pr_SPY, xlabel="mutual_dd_rolling_pr_SPY", ylabel="PR CAGR ➜ min net yield")
 
-def show_rr__yield_prcagr__ulcer_trim(*all):
+def show_rr__yield_prcagr__ulcerpr(*all, trim=True, title="PR CAGR ➜ 12m net yield vs PR ulcer"):
+    show_rr2(2, 3, 4, 5, *all, trim=trim, g_func=pr, y_func=[cagr, lambda x: get_curr_yield_rolling(ntr(x))], title=title, xlabel="PR ulcer", ylabel="PR CAGR ➜ 12m net yield")
+
+def show_rr__yield_cagrpr__ulcerpr_trim(*all):
     all = get(all, trim=True)
-    show_rr_yield_prcagr_ulcer(*all, title="PR CAGR ➜ 12m net yield vs PR ulcer (trim)")
+    show_rr__yield_prcagr__ulcerpr(*all, title="PR CAGR ➜ 12m net yield vs PR ulcer (trim)")
 
-def show_rr__yield_prcagr__ulcer_notrim(*all):
+def show_rr__yield_cagrpr__ulcerpr_notrim(*all):
     all = get(all, untrim=True)
-    show_rr_yield_prcagr_ulcer( *all, title="PR CAGR ➜ 12m net yield vs PR ulcer (no trim)")
+    show_rr__yield_prcagr__ulcerpr(*all, trim=False, title="PR CAGR ➜ 12m net yield vs PR ulcer (no trim)")
 
 
 
@@ -4605,7 +4645,7 @@ def get_price_actions_with_rolling_base(target, ranges, base, n=365):
         res.append(tt)
     return res
 
-def mutual_dd(target, base, dd_func):
+def mutual_dd(target, base, dd_func, weighted=True, min_depth=3):
     # target, base = get([target, base], mode="PR", trim=True)
     # base_dd = dd_func(base)
     # ranges = get_dds(base, min_days=min_days, min_depth=min_depth, dd_func=dd_func)
@@ -4614,7 +4654,7 @@ def mutual_dd(target, base, dd_func):
     if len(tup) < 2:
         return 0
     target, base = tup
-    ranges = get_dds(base, min_days=0, min_depth=0, dd_func=dd_func)
+    ranges = get_dds(base, min_days=0, min_depth=min_depth, dd_func=dd_func)
 
     if dd_func == dd:
         target_price_actions = get_price_actions(target, ranges)
@@ -4627,16 +4667,34 @@ def mutual_dd(target, base, dd_func):
     #dd_base = trimBy(dd_base, target) # was uncommented
     base_dd_actions = [dd_base[i:j] for i,j,_ in ranges]
 
-    pa_sum = np.sum([-s.sum() for s in target_price_actions])
-    base_dd_sum = np.sum([-s.sum() for s in base_dd_actions])
-    risk = pa_sum / base_dd_sum
-    return risk
+    pa_target = [-s.sum() for s in target_price_actions]
+    pa_base = [-s.sum() for s in base_dd_actions]
+    
+    if weighted:
+        #return np.median([t/b for t,b in zip(pa_target, pa_base)])
+        #return np.mean([t/b for t,b in zip(pa_target, pa_base)])
+        weights = [np.sqrt(x) for x in pa_base]
+        return np.sum([w*t/b for t,b,w in zip(pa_target, pa_base, weights)]) / np.sum(weights)
+    else:
+        return np.sum(pa_target) / np.sum(pa_base)
 
 def mutual_dd_pr(target, base, dd_func):
     return mutual_dd(pr(target), pr(base), dd_func=dd_func)
 
+def mutual_dd_rolling_pr(target, base):
+    return mutual_dd(pr(target), pr(base), dd_func=dd_rolling)
+
 def mutual_dd_rolling_pr_SPY(target):
     return mutual_dd(pr(target), pr('SPY'), dd_func=dd_rolling)
+
+def mutual_dd_rolling_pr_SPY_weighted(target):
+    return mutual_dd(pr(target), pr('SPY'), dd_func=dd_rolling, weighted=True)
+
+def mutual_dd_rolling_pr_SPY_unweighted(target):
+    return mutual_dd(pr(target), pr('SPY'), dd_func=dd_rolling, weighted=False)
+
+def mutual_dd_rolling_pr_TLT(target):
+    return mutual_dd(pr(target), pr('TLT'), dd_func=dd_rolling)
 
 def mutual_dd_rolling_SPY(target):
     return mutual_dd(target, get('SPY', mode=target.name.mode), dd_func=dd_rolling)
@@ -4653,7 +4711,7 @@ def show_dd_chunks(s, min_days=10, min_depth=1, dd_func=dd, mode="PR"):
     chunks = [s[i:j] for i,j,_ in ranges]
     show_dd(*chunks, mode=mode, dd_func=dd_func, legend=False, title_prefix=f"chunked {get_pretty_name_no_mode(s)}")
 
-def show_dd_price_actions(target, base, min_days=10, min_depth=1, dd_func=dd_rolling):
+def show_dd_price_actions(target, base, min_days=0, min_depth=3, dd_func=dd_rolling):
     # target = pr(target)
     # base = pr(base)
     # base_dd = dd_func(base)
@@ -4676,7 +4734,7 @@ def show_dd_price_actions(target, base, min_days=10, min_depth=1, dd_func=dd_rol
     #base_dd_actions = [base_dd[i:j] for i,j,_ in ranges]
     show(base_dd, target_price_actions, -10, -20, -30, -40, -50, legend=False, ta=False, title=f"{dd_func.__name__} price action {target.name} vs {base.name}")
 
-    print("mutual_dd_risk: ", mutual_dd(target, base, dd_func=dd_func))
+    print("mutual_dd_risk: ", mutual_dd(target, base, dd_func=dd_func, min_depth=min_depth))
 
 #################################
 
