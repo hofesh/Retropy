@@ -1,10 +1,15 @@
 # coding: utf-8
 
 ipy = False
-if "get_ipython" in globals():
-    ipy = True
-print(f"iPy: {ipy}")
-
+try:
+    from IPython import get_ipython
+    ipython = get_ipython()
+    if ipython:
+        ipy = True
+except:
+    pass
+if not ipy:
+    print(f"iPy: {ipy}")
 
 import warnings
 # https://stackoverflow.com/questions/40845304/runtimewarning-numpy-dtype-size-changed-may-indicate-binary-incompatibility
@@ -30,17 +35,8 @@ import numpy as np
 import sklearn as sk
 from sklearn import linear_model
 
-import quandl
-quandl.ApiConfig.api_key = "9nrUn7Sm1SdoeLdQGQB-"
 
-pd.core.common.is_list_like = pd.api.types.is_list_like # patch until pandas_datareader is fixed
-import pandas_datareader
-from pandas_datareader import data as pdr
-import fix_yahoo_finance as yf
-yf.pdr_override() # <== that's all it takes :-)
-import alpha_vantage
-from alpha_vantage.timeseries import TimeSeries
-from alpha_vantage.cryptocurrencies import CryptoCurrencies
+
 
 
 
@@ -81,6 +77,8 @@ pd.set_option('display.max_columns', 30)
 from IPython.display import clear_output, display
 
 
+from framework.utils import *
+from framework.base import *
 from framework.pca import *
 
 
@@ -94,117 +92,17 @@ def pd_from_dict(d):
 # In[ ]:
 
 
-# (hack) Global configs
-conf_cache_disk = True
-conf_cache_memory = True
-conf_cache_fails = False
 
-class GetConf:
-    def __init__(self, splitAdj, divAdj, cache, mode, source, secondary):
-        self.splitAdj = splitAdj
-        self.divAdj = divAdj
-        self.cache = cache
-        self.mode = mode
-        self.source = source
-        self.secondary = secondary
 
 
 # In[ ]:
 
 
-if not "fetchCache" in globals():
-    fetchCache = {}
-    
-if not "symbols_mem_cache" in globals():
-    symbols_mem_cache = {}
     
 
 
 # In[ ]:
 
-
-class Portfolio():
-    def __init__(self, items):
-        self.items = items
-
-
-class Symbol(str):
-    def __init__(self, fullname):
-        if is_symbol(fullname):
-            raise Exception("should not set symbol name as symbol instance")
-
-        self.fullname = fullname
-
-        parts = fullname.split("=")
-        if len(parts) == 2:
-            fullname = parts[0].strip()
-            self.nick = parts[1].strip()
-        else:
-            self.nick = None
-        self.fullname_nonick = fullname
-        
-        parts = fullname.split("!")
-        if len(parts) == 2:
-            fullname = parts[0]
-            self.currency = parts[1]
-        else:
-            self.currency = ""
-            
-        parts = fullname.split("@")
-        self.name = parts[0] #legacy
-        self.ticker = parts[0]
-        if len(parts) == 2:
-            self.source = parts[1]
-        else:
-            self.source = ""
-
-        self.diskname = self.ticker
-        if self.source:
-            self.diskname += "@" + self.source
-
-    @property
-    def pretty_name(self):
-        if not self.nick is None:
-            res = self.nick
-            #return f"{self.fullname_nonick} = {self.nick}"
-        else:
-            res = self.fullname
-        if hasattr(self, "mode") and self.mode:
-            res = f"{res} {self.mode}"
-        return res
-
-    @property
-    def nick_or_name(self):
-        if not self.nick is None:
-            return self.nick
-        return self.name
-
-    @property
-    def nick_or_name_with_mode(self):
-        if not self.nick is None:
-            res = self.nick
-        else:
-            res = self.name
-        if hasattr(self, "mode") and self.mode:
-            res = f"{res} {self.mode}"
-        return res
-
-    @property
-    def pretty_name_no_mode(self):
-        if not self.nick is None:
-            res = self.nick
-            #return f"{self.fullname_nonick} = {self.nick}"
-        else:
-            res = self.fullname
-        return res
-        
-    def __str__(self):
-        return self.fullname # temp, to resolve the get, reget issue with named symbols
-
-        if not self.nick is None:
-            return self.nick
-            #return f"{self.fullname_nonick} = {self.nick}"
-        return self.fullname
 
 
 # In[ ]:
@@ -287,772 +185,6 @@ def convertToday(value, fromCur, toCur):
 
 
 # In[ ]:
-
-def get_pretty_name(s):
-    return get_name(s, use_sym_name=False)
-
-def get_pretty_name_no_mode(s):
-    return get_name(s, use_sym_name=False, nomode=True)
-
-def get_name(s, use_sym_name=False, nomode=False, nick_or_name=False):
-    if s is None:
-        return ""
-    if is_series(s):
-        s = s.name
-    if not is_symbol(s):
-        s = Symbol(s)
-    if use_sym_name:
-        return s.fullname_nonick
-    else:
-        if nick_or_name:
-            if nomode:
-                return s.nick_or_name
-            else:
-                return s.nick_or_name_with_mode
-        else:
-            if nomode:
-                return s.pretty_name_no_mode
-            else:
-                return s.pretty_name
-
-getName = get_name
-
-def get_mode(s):
-    if is_series(s):
-        s = s.name
-    if is_symbol(s):
-        return s.mode
-    return ''
-
-def toSymbol(sym, source, mode, rebal):
-    if isinstance(sym, dict):
-        sym = dict_to_port_name(sym, use_sym_name=True)
-    if is_symbol(sym):
-        res = Symbol(sym.fullname)
-        res.mode = mode or sym.mode
-        res.rebal = rebal or sym.rebal
-        return res
-    if isinstance(sym, str):
-        if source is None:
-            res = Symbol(sym)
-        else:
-            res = Symbol(sym + "@" + source)
-        res.mode = mode
-        res.rebal = rebal
-        return res
-    assert False, "invalid type for Symbol: " + str(type(sym)) + ", " + str(sym)
-
-class DataSource:
-    
-    def __init__(self, source):
-        self.source = source
-    
-    def fetch(self, symbol, conf):
-        pass
-    
-    def process(self, symbol, df, conf):
-        pass
-    
-    def get(self, symbol, conf):
-        global conf_cache_disk, conf_cache_memory, conf_cache_fails
-
-        df = None
-
-        mem_key = self.source + "#" + symbol.fullname
-        
-        # get from mem cache
-        if conf.cache and conf_cache_memory:
-            if mem_key in symbols_mem_cache:
-                df = symbols_mem_cache[mem_key]
-        
-        # get from disk cache
-        if df is None and conf.cache and conf_cache_disk:
-            df = cache_get(symbol, self.source)
-        
-        # attempt to fetch the symbol
-        if df is None:
-            failpath = cache_file(symbol, self.source) + "._FAIL_"
-            if os.path.isfile(failpath):
-                mtime = datetime.datetime.fromtimestamp(os.path.getmtime(failpath))
-                diff = datetime.datetime.now() - mtime
-                if conf_cache_fails and diff.total_seconds() <= 24 * 3600:
-                    raise Exception("Fetching has previously failed for {0}, will try again later".format(symbol))
-
-            try:
-                # Attempt to actually fetch the symbol
-                if df is None:
-                    print("Fetching %s from %s .. " % (symbol.fullname, self.source), end="")
-                    df = self.fetch(symbol, conf)
-                    print("DONE")
-                if df is None:
-                    print("FAILED")
-                    raise Exception("Failed to fetch symbol: " + str(symbol) + " from " + self.source)
-                if len(df) == 0:
-                    print("FAILED")
-                    raise Exception("Symbol fetched but is empty: " + str(symbol) + " from " + self.source)
-            except:
-                # save a note that we failed
-                Path(failpath).touch()
-                raise
-        
-            # write to disk cache
-            cache_set(symbol, self.source, df)
-
-        # write to mem cache
-        symbols_mem_cache[mem_key] = df
-        
-        if conf.mode == "raw":
-            return df
-        else:
-            res = self.process(symbol, df, conf)
-        return res.sort_index()
-
-fred_forex_codes = """
-AUD	DEXUSAL
-BRL	DEXBZUS
-GBP	DEXUSUK
-CAD	DEXCAUS
-CNY	DEXCHUS
-DKK	DEXDNUS
-EUR	DEXUSEU
-HKD	DEXHKUS
-INR	DEXINUS
-JPY	DEXJPUS
-MYR	DEXMAUS
-MXN	DEXMXUS
-TWD	DEXTAUS
-NOK	DEXNOUS
-SGD	DEXSIUS
-ZAR	DEXSFUS
-KRW	DEXKOUS
-LKR	DEXSLUS
-SEK	DEXSDUS
-CHF	DEXSZUS
-VEF	DEXVZUS
-"""
-
-boe_forex_codes = """
-AUD	XUDLADD
-CAD	XUDLCDD
-CNY	XUDLBK73
-CZK	XUDLBK27
-DKK	XUDLDKD
-HKD	XUDLHDD
-HUF	XUDLBK35
-INR	XUDLBK64
-NIS	XUDLBK65
-JPY	XUDLJYD
-LTL	XUDLBK38
-MYR	XUDLBK66
-NZD	XUDLNDD
-NOK	XUDLNKD
-PLN	XUDLBK49
-GBP	XUDLGBD
-RUB	XUDLBK69
-SAR	XUDLSRD
-SGD	XUDLSGD
-ZAR	XUDLZRD
-KRW	XUDLBK74
-SEK	XUDLSKD
-CHF	XUDLSFD
-TWD	XUDLTWD
-THB	XUDLBK72
-TRY	XUDLBK75
-"""
-
-# https://blog.quandl.com/api-for-currency-data
-class ForexDataSource(DataSource):
-    def __init__(self, source):
-        self.fred_code_map = dict([s.split("\t") for s in fred_forex_codes.split("\n")[1:-1]])
-        self.boe_code_map = dict([s.split("\t") for s in boe_forex_codes.split("\n")[1:-1]])
-        self.boe_code_map["ILS"] = self.boe_code_map["NIS"]
-        super().__init__(source)
-    
-    def fetch(self, symbol, conf):
-        assert len(symbol.name) == 6
-        _from = symbol.name[:3]
-        _to = symbol.name[3:]
-        if _to != "USD" and _from != "USD":
-            raise Exception("Can only convert to/from USD")
-        invert = _from == "USD"
-        curr = _to if invert else _from
-        
-        div100 = 1
-        if curr == "GBC":
-            div100 = 100
-            curr = "GBP"
-        
-        if curr in self.fred_code_map:
-            code = self.fred_code_map[curr]
-            df = quandl.get("FRED/" + code)
-            if code.endswith("US") != invert: # some of the FRED currencies are inverted vs the US dollar, argh..
-                df = df.apply(lambda x: 1.0/x)
-            return df / div100
-
-        if curr in self.boe_code_map:
-            code = self.boe_code_map[curr]
-            df = quandl.get("BOE/" + code)
-            if not invert: # not sure if some of BEO currencies are NOT inverted vs USD, checked a few and they weren't
-                df = df.apply(lambda x: 1.0/x)
-            return df / div100
-
-        raise Exception("Currency pair is not supported: " + symbol.name)
-        
-    def process(self, symbol, df, conf):
-        return df.iloc[:, 0]
-      
-# https://github.com/ranaroussi/fix-yahoo-finance
-class YahooDataSource(DataSource):
-    def fetch(self, symbol, conf):
-        return pdr.get_data_yahoo(symbol.name, progress=False, actions=True)
-
-    def adjustSplits(self, price, splits):
-        r = splits[::-1].cumprod().shift().fillna(method="bfill")
-        return price / r
-
-    def process(self, symbol, df, conf):
-        if conf.mode == "TR":
-            assert conf.splitAdj and conf.divAdj
-            return df["Adj Close"]
-        elif conf.mode == "PR":
-            # Yahoo "Close" data is split adjusted. 
-            if conf.splitAdj:
-                return df["Close"]
-            else:
-                return self.adjustSplits(df["Close"], df["Stock Splits"])
-            # We find the unadjusted data using the splits data
-            # splitMul = df["Stock Splits"][::-1].cumprod().shift().fillna(method="bfill")
-            # return df["Close"] / splitMul        
-        elif conf.mode == "divs":
-            # Yahoo divs are NOT split adjusted, or are they?
-            # if conf.splitAdj:
-            #     return self.adjustSplits(df["Dividends"], df["Stock Splits"])
-            # else:
-            #     return df["Dividends"]
-            return df["Dividends"]
-        else:
-            raise Exception("Unsupported mode [" + conf.mode + "] for YahooDataSource")
-
-class QuandlDataSource(DataSource):
-    def fetch(self, symbol, conf):
-        return quandl.get(symbol.name)
-
-    def process(self, symbol, df, conf):
-        if conf.mode == "TR" or conf.mode == "PR":
-            if "Close" in df.columns:
-                return df["Close"]
-            return df.iloc[:, 0]
-        elif conf.mode == "divs":
-            return df.iloc[:, 0][0:0] # empty
-        else:
-            raise Exception("Unsupported mode [" + conf.mode + "] for QuandlDataSource")
-
-    
-class GoogleDataSource(DataSource):
-    def fetch(self, symbol, conf):
-        return pandas_datareader.data.DataReader(symbol.name, 'google')
-
-    def process(self, symbol, df, conf):
-        return df["Close"]
-    
-from ratelimiter import RateLimiter
-def limited(until):
-    duration = int(round(until - time.time()))
-    print('Rate limited, sleeping for {:d} seconds'.format(duration))
-    
-    
-AV_API_KEY = 'BB18'
-#AV_API_KEYS = ['BB18']
-AV_API_KEYS = ['HBTU90Z2A5LZG7T1', 'SC2LFF11DAEBY5XY', 'PMZO6PMXLZ0RTDRA', 'LYSN4091GT6HW4WP']
-class AlphaVantageDataSource(DataSource):
-
-    def __init__(self, source):
-        super(AlphaVantageDataSource, self).__init__(source)
-        self.key_i = 0
-        self.ratelimiter = RateLimiter(max_calls=4, period=60, callback=limited)
-    
-    def adjustSplits(self, price, splits):
-        r = splits[::-1].cumprod().shift().fillna(method="bfill")
-#        r = splits.cumprod()
-        return price / r
-    
-    # AV sometimes have duplicate split multiplers, we only use the last one 
-    def fixAVSplits(self, df):
-        df = df.sort_index()
-        split = df["8. split coefficient"]
-        count = 0
-        for t, s in list(split.items())[::-1]:
-            if s == 1.0:
-                count = 0
-                continue
-            count += 1
-            if count == 1:
-                continue
-            if count > 1:
-                split[t] = 1.0
-        df["8. split coefficient"] = split
-        return df
-
-    def fetch(self, symbol, conf):
-        with self.ratelimiter:
-            key = AV_API_KEYS[self.key_i]
-            self.key_i = (self.key_i + 1) % len(AV_API_KEYS)
-            ts = TimeSeries(key=key, output_format='pandas')
-            df, meta_data = ts.get_daily_adjusted(symbol.name, outputsize="full")
-            df.index = pd.to_datetime(df.index, format="%Y-%m-%d")
-            df = self.fixAVSplits(df)
-            return df
-
-    def process(self, symbol, df, conf):
-        if conf.mode == "TR":
-            return df["5. adjusted close"]
-        elif conf.mode == "PR":
-            if conf.splitAdj:
-                return self.adjustSplits(df["4. close"], df['8. split coefficient'])
-            else:
-                return df["4. close"]
-        elif conf.mode == "divs":
-            if conf.splitAdj:
-                return self.adjustSplits(df["7. dividend amount"], df['8. split coefficient'])
-            else:
-                return df["7. dividend amount"]
-            #return df["7. dividend amount"]
-        else:
-            raise Exception("Unsupported mode [" + conf.mode + "] for AlphaVantageDataSource")
-        
-class AlphaVantageCryptoDataSource(DataSource):
-
-    def fetch(self, symbol, conf):
-        cc = CryptoCurrencies(key=AV_API_KEY, output_format='pandas')
-        df, meta_data = cc.get_digital_currency_daily(symbol=symbol.name, market='USD')
-        df.index = pd.to_datetime(df.index, format="%Y-%m-%d")
-        return df
-
-    def process(self, symbol, df, conf):
-        return df['4a. close (USD)']
-
-class CryptoCompareDataSource(DataSource):
-    def fetch(self, symbol, conf):
-        url = "https://min-api.cryptocompare.com/data/histoday?fsym=__sym__&tsym=USD&limit=600000&aggregate=1&e=CCCAGG"
-        d = json.loads(requests.get(url.replace("__sym__", symbol.name)).text)
-        df = pd.DataFrame(d["Data"])
-        if len(df) == 0:
-            return None
-        df["time"] = pd.to_datetime(df.time, unit="s")
-        df.set_index("time", inplace=True)
-        return df
-
-    def process(self, symbol, df, conf):
-        return df.close
-
-# NOTE: data is SPLIT adjusted, but has no dividends and is NOT DIVIDEND adjusted 
-# NOTE: it has data all the way to the start, but returned result is capped in length for ~20 years
-#       and results are trimmed from the END, not from the start. TBD to handle this properly.
-#       for now we start at 1.1.2000
-class InvestingComDataSource(DataSource):
-
-    def getUrl(self, symbol):
-        symbol = symbol.name
-        data = {
-            'search_text': symbol,
-            'term': symbol, 
-            'country_id': '0',
-            'tab_id': 'All'
-        }
-        headers = {
-                    'Origin': 'https://www.investing.com',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
-                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.117 Safari/537.36',
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Accept': 'application/json, text/javascript, */*; q=0.01',
-                    'Referer': 'https://www.investing.com/search?q=' + symbol,
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Connection': 'keep-alive'    
-                }
-        r = requests.post("https://www.investing.com/search/service/search", data=data, headers=headers)
-        res = r.text
-        res = json.loads(res)
-        return res["All"][0]["link"]
-    
-    def getCodes(self, url):
-        url = "https://www.investing.com" + url + "-historical-data"
-        
-        headers = {
-                    'Origin': 'https://www.investing.com',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
-                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.117 Safari/537.36',
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Accept': 'application/json, text/javascript, */*; q=0.01',
-                    'Referer': 'https://www.investing.com/',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Connection': 'keep-alive'    
-                }
-        r = requests.get(url,headers=headers)
-        text = r.text
-        
-        m = re.search("smlId:\s+(\d+)", text)
-        smlId = m.group(1)
-        
-        m = re.search("pairId:\s+(\d+)", text)
-        pairId = m.group(1)
-        
-        return pairId, smlId
-    
-    def getHtml(self, pairId, smlId):
-        data = [
-            'curr_id=' + pairId,
-            'smlID=' + smlId,
-            'header=',
-            'st_date=01%2F01%2F2000',
-            'end_date=01%2F01%2F2100',
-            'interval_sec=Daily',
-            'sort_col=date',
-            'sort_ord=DESC', 
-            'action=historical_data'
-        ]
-        data = "&".join(data)
-        headers = {
-            'Origin': 'https://www.investing.com',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.117 Safari/537.36',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept': 'text/plain, */*; q=0.01',
-            'Referer': 'https://www.investing.com/',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Connection': 'keep-alive'    
-        }
-        r = requests.post("https://www.investing.com/instruments/HistoricalDataAjax", data=data, headers=headers)
-        return r.text
-    
-    def fetch(self, symbol, conf):
-        symbolUrl = self.getUrl(symbol)
-        
-        pairId, smlId = self.getCodes(symbolUrl)
-        
-        html = self.getHtml(pairId, smlId)
-        #print(html)
-        parsed_html = BeautifulSoup(html, "lxml")
-        df = pd.DataFrame(columns=["date", "price"])
-        
-        for i, tr in enumerate(parsed_html.find_all("tr")[1:]): # skip header
-            data = [x.get("data-real-value") for x in tr.find_all("td")]
-            if len(data) == 0 or data[0] is None:
-                continue
-            date = datetime.datetime.utcfromtimestamp(int(data[0]))
-            close = float(data[1].replace(",", ""))
-            #open = data[2]
-            #high = data[3]
-            #low = data[4]
-            #volume = data[5]
-            df.loc[i] = [date, close]
-            
-        df = df.set_index("date")
-        return df
-
-    def process(self, symbol, df, conf):
-        return df['price']
-
-import time    
-class JustEtfDataSource(DataSource):
-
-
-    def parseDate(self, s):
-        s = s.strip(" {x:Date.UTC()")
-        p = [int(x) for x in s.split(",")]
-        dt = datetime.datetime(p[0], p[1] + 1, p[2])
-        return dt
-
-    def parseDividends(self, x):
-        x = re.split("data: \[", x)[1]
-        x = re.split("\]\^,", x)[0]
-        data = []
-        for x in re.split("\},\{", x):
-            p = re.split(", events: \{click: function\(\) \{  \}\}, title: 'D', text: 'Dividend ", x)
-            dt = self.parseDate(p[0])
-            p = p[1].strip("',id: }").split(" ")
-            currency = p[0]
-            value = float(p[1])
-            data.append((dt, value))
-        return pd.DataFrame(data, columns=['dt', 'divs']).set_index("dt")
-
-    def parsePrice(self, s):
-        data = []
-        line = s
-        t = "data: ["
-        line = line[line.find(t) + len(t):]
-        t = "^]^"
-        line = line[:line.find(t)]
-        #print(line)
-        parts = line.split("^")
-        for p in parts:
-            p = p.strip("[],")
-            p = p.split(")")
-            value = float(p[1].replace(",", ""))
-            dateStr = p[0].split("(")[1]
-            p = [int(x) for x in dateStr.split(",")]
-            dt = datetime.datetime(p[0], p[1] + 1, p[2])
-            data.append((dt, value))
-            #print(dt, value)
-        df = pd.DataFrame(data, columns=['dt', 'price']).set_index("dt")
-        return df
-
-    def parseRawText(self, s):
-        x = re.split("addSeries", s)
-        df = self.parsePrice(x[1])
-        divs = self.parseDividends(x[2])
-        df["divs"] = divs["divs"]
-        return df
-
-    def getIsin(self, symbol):
-        symbolName = symbol.name
-        data = {
-            'draw': '1',
-            'start': '0', 
-            'length': '25', 
-            'search[regex]': 'false', 
-            'lang': 'en', 
-            'country': 'GB', 
-            'universeType': 'private', 
-            'etfsParams': 'query=' + symbolName, 
-            'groupField': 'index', 
-        }
-        headers = {
-                    'Accept-Encoding': 'gzip, deflate, br',
-                }
-        session = requests.Session()
-        
-        
-        r = session.get("https://www.justetf.com/en/etf-profile.html?tab=chart&isin=IE00B5L65R35", headers=headers)
-        
-        r = session.post("https://www.justetf.com/servlet/etfs-table", data=data, headers=headers)
-        res = r.text
-        
-        res = json.loads(res)
-        for d in res["data"]:
-            if d["ticker"] == symbolName:
-                return (d["isin"], session)
-        raise Exception("Symbol not found in source: " + str(symbol))
-    
-    def getData(self, isin, session, conf, raw=False):
-        if not session:
-            session = requests.Session()
-            
-        headers = {
-                    'Accept-Encoding': 'gzip, deflate, br',
-                }
-        
-        url3 = "https://www.justetf.com/uk/etf-profile.html?groupField=index&from=search&isin=" + isin + "&tab=chart"
-        r = session.get(url3, headers=headers)
-
-        r = session.get("https://www.justetf.com/sw.js", headers=headers)
-        text = r.text
-
-        headers = {
-            'accept-encoding': 'gzip, deflate, br',
-            'accept-language': 'en-US,en;q=0.9,he;q=0.8',
-            'wicket-focusedelementid': 'id1b',
-            'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.62 Safari/537.36',
-            'accept': 'text/xml',
-            'referer': 'https://www.justetf.com/uk/etf-profile.html?groupField=index&from=search&isin=IE00B5L65R35&tab=chart',
-            'authority': 'www.justetf.com',
-            'wicket-ajax': 'true'
-        }
-
-        if conf.mode == "PR":
-            headers["wicket-focusedelementid"] = "includePayment"
-            url = "https://www.justetf.com/uk/?wicket:interface=:2:tabs:panel:chart:optionsPanel:selectContainer:includePaymentContainer:includePayment::IBehaviorListener:0:1&random=0.8852086768595453"
-            r = session.post(url, headers=headers)
-            text = r.text
-            headers["wicket-focusedelementid"] = "id1b"
-        
-        url = "https://www.justetf.com/en/?wicket:interface=:0:tabs:panel:chart:dates:ptl_3y::IBehaviorListener:0:1&random=0.2525050377785838"
-        r = session.get(url, headers=headers)
-        text = r.text
-
-        
-        # PRICE (instead of percent change)
-        data = { 'tabs:panel:chart:optionsPanel:selectContainer:valueType': 'market_value' }
-        url = "https://www.justetf.com/en/?wicket:interface=:0:tabs:panel:chart:optionsPanel:selectContainer:valueType::IBehaviorListener:0:1&random=0.7560635418741075"
-        r = session.post(url, headers=headers, data=data)
-        text = r.text
-        
-        # CURRENCY
-        #data = { 'tabs:panel:chart:optionsPanel:selectContainer:currencies': '3' }
-        #url = "https://www.justetf.com/en/?wicket:interface=:0:tabs:panel:chart:optionsPanel:selectContainer:currencies::IBehaviorListener:0:1&random=0.8898086171718949"
-        #r = session.post(url, headers=headers, data=data)
-        #text = r.text
-        
-        
-        
-        url = "https://www.justetf.com/en/?wicket:interface=:0:tabs:panel:chart:dates:ptl_max::IBehaviorListener:0:1&random=0.2525050377785838"
-        #url = "https://www.justetf.com/uk/?wicket:interface=:3:tabs:panel:chart:dates:ptl_max::IBehaviorListener:0:1"
-        
-        #plain_cookie = 'locale_=en_GB; universeCountry_=GB; universeDisclaimerAccepted_=false; JSESSIONID=5C4770C8CE62E823C17E292486D04112.production01; AWSALB=Wy2YQ+nfXWR+lTtsGly/hBDFD5pCCtYo/VxE0lIXBPlA/SdQDbRxhg+0q2E8UybYawqQiy3/1m2Bs4xvN8yFW3cs/2zy8385MuhGGCN/FUwnstSvbL7T8rfcV03k'
-        #cj = requests.utils.cookiejar_from_dict(dict(p.split('=') for p in plain_cookie.split('; ')))
-        #session.cookies = cj
-        
-        r = session.get(url, headers=headers)
-        text = r.text
-        #print(text)
-        if raw:
-            return text
-        
-        return self.parseRawText(text)
-        
-        
-    
-    def fetch(self, symbol, conf):
-        return self.getData(symbol.name, None, conf)
-
-    def process(self, symbol, df, conf):
-        if conf.mode == "TR":
-            return df["price"]
-        elif conf.mode == "PR":
-            raise Exception("Unsupported mode [" + conf.mode + "] for JustEtfDataSource")
-        elif conf.mode == "divs":
-            return df["divs"]
-        else:
-            raise Exception("Unsupported mode [" + conf.mode + "] for JustEtfDataSource")
-        
-        return df['price']
-    
-#x = JustEtfDataSource("XXX")
-#isin, session = x.getIsin(Symbol("ERNS"))
-#t = x.getData(isin, session)
-
-#conf = lambda x: x
-#conf.mode = "TR"
-#t = x.getData("IE00B5L65R35", None, conf, True)
-
-class BloombergDataSource(DataSource):
-    def fetch(self, symbol, conf):
-        headers = {
-                    'Origin': 'https://www.bloomberg.com',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
-                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.117 Safari/537.36',
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Accept': 'application/json, text/javascript, */*; q=0.01',
-                    'Referer': 'https://www.bloomberg.com',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Connection': 'keep-alive'    
-                }
-        url = "https://www.bloomberg.com/markets/api/bulk-time-series/price/__sym__?timeFrame=5_YEAR"
-        sym = symbol.name.replace(";", ":")
-        if not ':' in sym:
-            sym += ":US" # default US equities
-        text = requests.get(url.replace("__sym__", sym), headers=headers).text
-        if len(text) < 100:
-            raise Exception("Failed to fetch from B")
-        d = json.loads(text)
-        #print(d)
-        df = pd.DataFrame(d[0]["price"])
-        if len(df) == 0:
-            return None
-        df["date"] = pd.to_datetime(df.date, format="%Y-%m-%d")
-        df.set_index("date", inplace=True)
-        return df
-
-    def process(self, symbol, df, conf):
-        if conf.mode == "TR":
-            return df.value # we don't support TR, but let it slide
-        elif conf.mode == "PR":
-            return df.value
-        elif conf.mode == "divs":
-            return pd.Series()
-        else:
-            raise Exception("Unsupported mode [" + conf.mode + "] for AlphaVantageDataSource")
-
-    
-# source: https://info.tase.co.il/Heb/General/ETF/Pages/ETFGraph.aspx?companyID=001523&subDataType=0&shareID=01116441
-# graphs -> "export data" menu
-# source: https://www.tase.co.il/he/market_data/index/142/graph
-# graphs -> "export data" menu
-class TASEDataSource(DataSource):
-    def fetch(self, symbol, conf):
-        sym = symbol.name
-        typ = None
-        if 7 <= len(sym) <= 8:
-            if sym.startswith("1"):
-                sym = "0" + sym
-            if sym.startswith("5"):
-                sym = "0" + sym
-            if sym.startswith("01"):
-                url = "https://info.tase.co.il/_layouts/15/Tase/ManagementPages/Export.aspx?sn=none&GridId=128&ct=1&oid=__sym__&ot=1&lang=he-IL&cp=8&CmpId=001523&ExportType=3&cf=0&cv=0&cl=0&cgt=1&dFrom=__from__&dTo=__to__"
-                typ = "sal"
-            elif sym.startswith("05"):
-                url = "https://info.tase.co.il/_layouts/15/Tase/ManagementPages/Export.aspx?sn=none&GridId=128&ct=3&oid=__sym__&ot=4&lang=he-IL&cp=8&fundC=0&ExportType=3&cf=0&cv=0&cl=0&cgt=1&dFrom=__from__&dTo=__to__"
-                typ = "krn"
-            else:
-                raise Exception("unsupported prefix: " + sym)
-                
-            headers = {
-                'Origin': 'https://info.tase.co.il',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.117 Safari/537.36',
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'text/plain, */*; q=0.01',
-                'Referer': 'https://info.tase.co.il/',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Connection': 'keep-alive'    
-            }                
-        else:
-            url = "https://api.tase.co.il/api/ChartData/ChartData/?ct=1&ot=2&lang=1&cf=0&cp=8&cv=0&cl=0&cgt=1&dFrom=__from__&dTo=__to__&oid=__sym__"
-            typ = "idx"
-            
-            headers = {
-                    'Origin': 'https://api.tase.co.il',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
-                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.117 Safari/537.36',
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Accept': 'text/plain, */*; q=0.01',
-                    'Referer': 'https://api.tase.co.il/',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Connection': 'keep-alive'    
-                }            
-            
-        url = url.replace("__from__", "01/01/2000")
-        today = datetime.date.today().strftime("%d/%m/%Y")
-        url = url.replace("__to__", today)
-        url = url.replace("__sym__", sym)
-
-        r = requests.get(url, headers=headers)        
-        text = r.text
-        
-        if typ == "idx":
-            js = json.loads(text)
-            df = pd.read_json(json.dumps(js["PointsForHistoryChart"]))
-            df["date"] = pd.to_datetime(df["TradeDate"], format="%d/%m/%Y")
-            df["price"] = df["ClosingRate"]
-        else:
-            # skip junk data
-            lines = text.split("\n")
-            text = "\n".join(lines[4:])
-
-            from io import StringIO
-            text = StringIO(text)
-
-            if typ == "sal":
-                names = ["date", "adj_close", "close", "turnover"]
-                price_col = "adj_close"
-            if typ == "krn":
-                names = ["date", "sell", "buy"]
-                price_col = "sell"
-
-            df = pd.read_csv(text, header=None, names=names)
-            df["date"] = pd.to_datetime(df["date"], format="%d/%m/%Y")
-            df["price"] = df[price_col]
-
-        df = df.set_index("date")
-        return df
-
-    def process(self, symbol, df, conf):
-        return df["price"]
 
 
 # In[ ]:
@@ -1161,120 +293,9 @@ def unwrap(s):
         return s.s
     return s
 
-def name(s, n):
-    if is_series(s):
-        if is_symbol(n):
-            s.name = n
-        elif is_symbol(s.name):
-            sym = Symbol(s.name.fullname_nonick + "=" + n)
-            sym.mode = s.name.mode
-            sym.rebal = s.name.rebal
-            s.name = sym
-        else:
-            s.name = n
-    return s
     
 def rename(s, n):
     return name(s.copy(), n)
-    
-data_sources = {
-    
-    "TASE": TASEDataSource("TASE"),
-    "B": BloombergDataSource("B"),
-    "JT": JustEtfDataSource("JT"),
-    "Y": YahooDataSource("Y"),
-    "IC": InvestingComDataSource("IC"),
-    "Q": QuandlDataSource("Q"),
-    "AV": AlphaVantageDataSource("AV"),
-    "CC": CryptoCompareDataSource("CC"),
-    "CCAV": AlphaVantageCryptoDataSource("CCAV"),
-    "CUR": ForexDataSource("CUR"),
-    "G": GoogleDataSource("G")
-               }
-
-def getFrom(symbol, conf, error):
-    # special handling for forex
-    # if a match, if will recurse and return here with XXXUSD@CUR
-    if len(symbol.name) == 6 and not symbol.source and not conf.source:
-        parts = symbol.name[:3], symbol.name[3:]
-        if parts[0] == "USD" or parts[1] == "USD":
-            return getForex(parts[0], parts[1])
-    
-    source = symbol.source or conf.source or "AV"
-    if not source in data_sources:
-        raise Exception("Unsupported source: " + source)
-    if not conf.secondary:
-        return data_sources[source].get(symbol, conf)
-    try:
-        return data_sources[source].get(symbol, conf)
-    except Exception as e:
-        # if the source wasn't explicitly stated, try from secondary
-        if not symbol.source and not conf.source:
-            print(f"Failed to fetch {symbol} from {source}, trying from {conf.secondary} .. ", end="")
-            try:
-                res = data_sources[conf.secondary].get(symbol, conf)
-            except Exception as e:
-                if error == 'raise':
-                    raise Exception from e
-                return None
-            print("DONE")
-            return res
-        else:
-            if error == 'raise':
-                raise Exception from e
-            return None
-
-def format_filename(s):
-    valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
-    filename = ''.join(c if c in valid_chars else '_' for c in s )
-    filename = filename.replace(' ','_')
-    return filename
-    
-import os.path
- 
-def get_symbols_path():
-    if os.path.isfile('Retropy_framework.py'):
-        base = ''
-    elif os.path.isfile('../Retropy_framework.py'):
-        base = '../'
-    elif os.path.isfile('../../Retropy_framework.py'):
-        base = '../../'
-    else:
-        raise Exception('base path not found')
-    
-    return os.path.join(base, "symbols")
-
-def cache_file(symbol, source):
-    filepath = os.path.join(get_symbols_path(), source, format_filename(symbol.ticker))
-    dirpath = os.path.dirname(filepath)
-    if not os.path.exists(dirpath):
-        os.makedirs(dirpath)
-    return filepath
-
-def cache_clear():
-    global symbols_mem_cache
-    dirpath = "symbols"
-    if not os.path.exists(dirpath):
-        print(f"path not found: {dirpath}")
-    import shutil
-    shutil.rmtree(dirpath)        
-    symbols_mem_cache = {}
-    print("cache cleared")
-    
-def cache_get(symbol, source):
-    filepath = cache_file(symbol, source)
-    # if os.path.exists(filepath + '.gz'):
-    #     filepath += '.gz'
-    if os.path.exists(filepath):
-        res = pd.read_csv(filepath, squeeze=False, index_col="date")
-        res.index = pd.to_datetime(res.index, format="%Y-%m-%d")
-        return res
-    return None
-
-def cache_set(symbol, source, s):
-    filepath = cache_file(symbol, source)# + '.gz'
-    s.to_csv(filepath, date_format="%Y-%m-%d", index_label="date")
-
 def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=False):
     res = []
     for k, v in d.items():
@@ -1286,407 +307,8 @@ def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=Fa
             res.append(f"{getName(k, use_sym_name=use_sym_name)}:{round(v, rnd)}")
     return "|".join(res)
     
-# def get_port(d, name, getArgs):
-#     if isinstance(d, str):
-#         res = parse_portfolio_def(d)
-#         if not res:
-#             raise Exception("Invalid portfolio definition: " + d)
-#         d = res
-#     if not isinstance(d, dict):
-#         raise Exception("Portfolio definition must be str or dict, was: " + type(d))        
-#     if isinstance(name, dict):
-#         name = dict_to_port_name(d)
-#     if isinstance(name, str):
-#         parts = name.split("=")
-#         if len(parts) == 2:
-#             name = parts[1].strip()
-#     args = getArgs.copy()
-#     args["trim"] = True
-#     syms = get(list(d.keys()), **args)
-#     syms = dict(zip(d.keys(), syms))
-#     if args['mode'] == 'divs':
-#         #raise Exception("port divs not supported")
-#         df = pd.DataFrame(syms[k]*v/100 for k,v in d.items()).T
-#         df = df.dropna(how='all').fillna(0)
-#         res = df.sum(axis=1)
-#     else:
-#         df = pd.DataFrame(logret(syms[k], fillna=True)*v/100 for k,v in d.items()).T
-#         df = df.dropna() # should we use any or all ?
-#         res = i_logret(df.sum(axis=1))
-#     res.name = name
-#     return res
-
-# i_logret(weighted logret) - this is in effect daily rebalancing
-# weighted get - this is in effect no rebalancing
-def get_port(d, name, getArgs):
-    if isinstance(d, str):
-        res = parse_portfolio_def(d)
-        if not res:
-            raise Exception("Invalid portfolio definition: " + d)
-        d = res
-    if not isinstance(d, dict):
-        raise Exception("Portfolio definition must be str or dict, was: " + type(d))        
-
-    if not is_symbol(name):
-        raise Exception("portfolio must have a valid Symbol as name")
-    # if is_symbol(name):
-    #     pass
-    # elif isinstance(name, dict):
-    #     name = Symbol(dict_to_port_name(d))
-    # elif isinstance(name, str):
-    #     name = Symbol(name)
-    # else:
-    #     raise Exception("a proper portfolio name must be specified")
-        # parts = name.split("=")
-        # if len(parts) == 2:
-        #     name = parts[1].strip()
-
-    rebal = name.rebal
-    mode = name.mode
-    if mode == 'divs':
-        #raise Exception("port divs not supported")
-        args = getArgs.copy() 
-        args["trim"] = True
-        syms = get(list(d.keys()), **args)
-        syms = dict(zip(d.keys(), syms))
-        df = pd.DataFrame(syms[k]*v/100 for k,v in d.items()).T
-        df = df.dropna(how='all').fillna(0)
-        res = df.sum(axis=1)
-    else:
-
-        # if getArgs['rebal'] == 'none':
-        #     syms = get(list(d.keys()), **getArgs)
-        #     syms = doTrim(syms)
-        #     if getArgs['mode'] != 'PR':
-        #         syms = doAlign(syms)
-        #     syms = [s * w/100 for s, w in zip(syms, d.values())]
-        #     res = pd.DataFrame(syms).sum()
-
-        if rebal == 'none':
-            syms = get(list(d.keys()), **getArgs)
-            syms = doTrim(syms)
-            if mode == 'PR':
-                base = [s[0] * w for s, w in zip(syms, d.values())]
-                base = np.sum(base) / np.sum(list(d.values()))
-            else:
-                base = 1
-            syms = doAlign(syms)
-            syms = [(s-1) * w/100 for s, w in zip(syms, d.values())]
-            res = pd.DataFrame(syms).sum() + 1
-            res = res * base
-
-
-            # if getArgs['mode'] == 'PR':
-            #     syms = [s * w/100 for s, w in zip(syms, d.values())]
-            #     res = pd.DataFrame(syms).sum() / np.sum(list(d.values()))
-            # else:
-            #     syms = doAlign(syms)
-            #     syms = [(s-1) * w/100 for s, w in zip(syms, d.values())]
-            #     res = pd.DataFrame(syms).sum() + 1
-
-        if rebal == 'day':
-            args = getArgs.copy() 
-            args["trim"] = True
-            syms = get(list(d.keys()), **args)
-            syms = dict(zip(d.keys(), syms))
-            df = pd.DataFrame(logret(syms[k], fillna=True)*v/100 for k,v in d.items()).T
-            df = df.dropna() # should we use any or all ?
-            res = i_logret(df.sum(axis=1))
-
-    res.name = name
-    return res
-
-def parse_portfolio_def(s):
-    if isinstance(s, dict):
-        return s
-    if isinstance(s, Portfolio):
-        return s
-    if not isinstance(s, str):
-        return None
-    d = {}
-    parts = s.split('=')
-    if len(parts) == 2:
-        s = parts[0].strip()
-    parts = s.split("|")
-    for p in parts:
-        parts2 = p.split(":")
-        if len(parts2) > 2:
-            return None
-        elif len(parts2) == 2:
-            d[parts2[0]] = float(parts2[1])
-        else:
-            d[parts2[0]] = None
-    
-    # equal weights
-    if np.all([x is None for x in d.values()]):
-        if len(d) == 1: # a single equal weight, is just a symbol, not a portfolio
-            return None
-        d = {k: 100/len(d) for k in d.keys()}
-    return d
-
-def getNtr(s, getArgs, tax=0.25):
-    mode = getArgs["mode"]
-    getArgs["mode"] = "PR"
-    pr = get(s, **getArgs)
-    getArgs["mode"] = "divs"
-    divs = get(s, **getArgs)
-    getArgs["mode"] = mode
-    
-    divs = divs * (1-tax)   # strip divs from their taxes
-    divs = divs / pr        # get the div to price ratio
-    divs = divs.fillna(0)   # fill gaps with zero
-    r = 1 + divs          # add 1 for product later
-    r = r.cumprod()         # build the cum prod ratio
-    ntr = (pr * r).dropna() # mul the price with the ratio - this is the dividend reinvestment
-    #ntr = wrap(ntr, s.name + " NTR")
-    ntr.name = s.name
-    return ntr
-
-def get_intr(s, getArgs):
-    mode = getArgs.get("mode", None)
-    
-    getArgs["mode"] = "PR"
-    pr = get(s, **getArgs)
-    
-    getArgs["mode"] = "divs"
-    dv = get(s, **getArgs)
-    
-    getArgs["mode"] = mode
-
-    if is_series(s):
-        start = s.index[0]
-        pr = pr[start:]
-        divs = divs[start:]
-    
-#     dv = divs(s)
-#     pr = price(s)
-    
-    tax = 0.25
-    dv = dv * (1-tax)   # strip divs from their taxes
-    dv = dv.reindex(pr.index).fillna(0)
-    res = dv.cumsum() + pr
-    res.name = get_name(s)
-    return res
-
-def is_symbol(s):
-    return type(s).__name__ == "Symbol"
-    # isinstance(s, Symbol) - this doesn't work, as the Symbol class seems to have seperate instances in the python and Jupyter scopes
-
-class RpySeries(pd.Series):
-    def __hash__(self):
-        return id(self)
-    
-    def __eq__(self, other):
-        return id(self) == id(other)
-
-    def sname(self, n):
-        name(self, n)
-        return self
-
-    def __mul__(self, other):
-        if is_number(other):
-            return super(RpySeries, self).__mul__(other)
-        other = get(other)
-        res = super(RpySeries, self).__mul__(other)
-        res.name = get_pretty_name(self) + " * " + get_pretty_name(other)
-        return rpy(res)
-
-# def sdiv(a, b):
-#     if isinstance(a,list):
-#         return lmap(lambda x: sdiv(x, b), a)
-#     a, b = get([a, b])
-#     x = a / b
-#     x.name = get_pretty_name(a) + " / " + get_pretty_name(b)
-#     return x
-
-def rpy(s):
-    if isinstance(s, RpySeries):
-        return s
-    if is_series(s):
-        res = RpySeries(s, s.index)
-        #res.name = s.name # name is picked up automatically
-        return res
-    return s
-
-def is_rpy(s):
-    return isinstance(s, RpySeries)
 
 # error in ('raise', 'ignore'), ignore will return None
-def get(symbol, source=None, cache=True, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, untrim=False, remode=True, start=None, end=None, freq=None, rebal=None, silent=False, error='raise'):
-
-    # tmp
-    # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
-    #     raise Exception("Invalid get() API usage")
-
-    if not error in ['raise', 'ignore']:
-        raise Exception(f"error should be in [raise, ignore], not: {error}")
-
-    if is_number(symbol):
-        return symbol
-
-    #print(f"get: {symbol} [{type(symbol)}] [source: {source}]")
-    getArgs = {}
-    getArgs["source"] = source
-    getArgs["cache"] = cache
-    getArgs["splitAdj"] = splitAdj
-    getArgs["divAdj"] = divAdj
-    getArgs["adj"] = adj
-    getArgs["mode"] = mode
-    getArgs["secondary"] = secondary
-    getArgs["interpolate"] = interpolate
-    getArgs["despike"] = despike
-    getArgs["trim"] = trim
-    #getArgs["reget"] = reget
-    getArgs["untrim"] = untrim
-    getArgs["remode"] = remode
-    getArgs["start"] = start
-    getArgs["end"] = end
-    getArgs["freq"] = freq
-    getArgs["rebal"] = rebal
-    getArgs["silent"] = silent
-    getArgs["error"] = error
-
-    if symbol is None:
-        return None
-    
-    if isinstance(symbol, tuple) or isinstance(symbol, map) or isinstance(symbol, types.GeneratorType):
-        symbol = list(symbol)
-    if isinstance(symbol, list):
-        lst = symbol
-        #if reget is None and trim == True:
-        #    getArgs["reget"] = True # this is a sensible default behaviour
-        lst = [get(s, **getArgs) for s in lst]
-        if not start is None:
-            lst = filterByStart(lst, start)
-        if not end is None:
-            lst = filterByEnd(lst, end)
-        if not trim is False:
-            lst = doTrim(lst, trim=trim, silent=silent)
-        return lst
-    
-    if isinstance(source, list):
-        res = []
-        for s in source:
-            getArgs["source"] = s
-            res.append(get(symbol, **getArgs))
-        return res
-    # support for yield period tuples, e.g.: (SPY, 4)
-    #if isinstance(symbol, tuple) and len(symbol) == 2:
-    #    symbol, _ = symbol
-    
-    reget = None
-    if is_series(symbol):
-        
-        # these are regression series, we can't get them from sources (yet)
-        if symbol.name and symbol.name.startswith("~"):
-            reget = False
-
-        if reget != False:
-            
-            # if a mode has changed, reget (and if not, keep source mode)
-            if is_symbol(symbol.name) and symbol.name.mode != mode:
-                if mode is None:
-                    mode = symbol.name.mode # just in case we do reget (say if trim=True), keep the symbol mode
-                elif remode:
-                    reget = True
-
-            # if a rebal has changed, reget (and if not, keep source mode)
-            if is_symbol(symbol.name) and symbol.name.rebal != rebal:
-                if rebal is None:
-                    rebal = symbol.name.rebal # just in case we do reget (say if trim=True), keep the symbol rebal
-                else:
-                    reget = True
-
-            # if any trim is requested, reget
-            # why? trim alone should not imply a reget
-            # if not trim is False:
-            #     reget = True
-
-            # this is to un-trim a trimmed series
-            if untrim:
-                reget = True
-                if trim is False:
-                    trim = True
-            else:
-                # this is to keep an existing trim, if we reget (say due to remode)
-                if trim is False or trim is True:
-                    trim = symbol
-
-            # if not untrim and trim is False:
-            #     trim = symbol
-
-        if not reget:
-            # if freq:
-            #     symbol = symbol.asfreq(freq)
-            # return symbol
-            s = symbol
-        else:
-            symbol = symbol.name
-    else:
-        reget = True
-
-    if reget:
-        if symbol == "":
-            raise Exception("attemping to get an empty string as symbol name")
-        
-        if "ignoredAssets" in globals() and ignoredAssets and symbol in ignoredAssets:
-            return wrap(pd.Series(), "<empty>")
-
-        # special handing for composite portfolios
-        port = parse_portfolio_def(symbol)
-        
-        mode = mode or "TR"
-        rebal = rebal or 'none'
-        symbol = toSymbol(symbol, source, mode, rebal)
-
-        if port:
-            s = get_port(port, symbol, getArgs)
-        else:
-            if mode == "NTR":
-                s = getNtr(symbol, getArgs)
-            elif mode == "GTR":
-                s = getNtr(symbol, getArgs, tax=0)
-            elif mode == "ITR":
-                s = get_intr(symbol, getArgs)
-            else:
-                if adj == False:
-                    splitAdj = False
-                    divAdj = False
-                s = getFrom(symbol, GetConf(splitAdj, divAdj, cache, mode, source, secondary), error)
-                if s is None: # can happen in error=='ignore'
-                    return None
-
-        s.name = symbol
-        if np.any(s != 0):
-            s = s[s != 0] # clean up broken yahoo data, etc ..
-
-        if mode != "divs" and mode != "raw":        
-            if despike:
-                s = globals()["despike"](s)
-
-            if interpolate and s.shape[0] > 0:
-                s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
-                s = s.interpolate()
-
-
-    # given we have "s" ready, some operations should be performed if reuested regardless if the symbols was reget or not
-    if not trim is False:
-        if s.shape[0] > 0: # this is an odd edge-case, trim() fails for empty series (with trim=s), so we just skip it
-            trimmed = doTrim([s], trim=trim, silent=True)
-            if len(trimmed) == 0:
-                s = s[-1:0] # empty series
-            else:
-                s = trimmed[0]
-
-    if freq:
-        s = s.asfreq(freq)
-    
-    if s.shape[0] == 0:
-        warn(f"get() is returning an empty series for {s.name}")
-
-    #return s
-    return rpy(s)
-
 
 # plotting
 
@@ -1728,11 +350,6 @@ def createHorizontalLine(yval):
         }
     return shape
 
-def is_number(s):
-    return isinstance(s, numbers.Real)
-
-def is_named_number(val):
-    return isinstance(val, tuple) and len(val) == 2 and isinstance(val[0], numbers.Real) and isinstance(val[1], str)    
 
 def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, annotations=False, xlabel=None, ylabel=None, show_zero_point=False, same_ratio=False):
     data = []
@@ -1763,7 +380,7 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
             if isinstance(x, pd.DatetimeIndex):
                 x = x.to_pydatetime()
             data.append(go.Scatter(x=x, y=val, name=name, text=text, mode=mode, textposition='middle right', connectgaps=False))
-            start_date = _start(val)
+            start_date = s_start(val)
             if start_date:
                 if min_date is None:
                     min_date = start_date
@@ -1895,137 +512,9 @@ def plotly_area(df, title=None):
 
 # data processing
 
-def _start(s):
-    if s.shape[0] > 0:
-        return s.index[0]
-    return None
-
-def _end(s):
-    return s.index[-1]
-
-def getCommonDate(data, pos, agg=max, get_fault=False):
-    data = flattenLists(data)
-    data = [s for s in data if is_series(s)]
-    if not data:
-        if get_fault:
-            return None, None
-        else:
-            return None
-    if pos == 'start':
-        dates = [_start(s) for s in data if s.shape[0] > 0]
-    elif pos == 'end':
-        dates = [_end(s) for s in data if s.shape[0] > 0]
-    else:
-        raise Exception(f"Invalid pos: {pos}")
-    if len(dates) == 0:
-        if get_fault:
-            return None, None
-        else:
-            return None
-    val = agg(dates)
-    if get_fault:
-        names = [(s.name or "<noname>") for date, s in zip(dates, data) if date == val]
-        fault = ", ".join(names[:2])
-        if len(names) > 2:
-            fault += f", +{len(names)} more"
-        return val, fault
-    return val
-
-def is_series(x):
-    return isinstance(x, pd.Series) or isinstance(x, Wrapper)
-
-def is_not_series(x):
-    return not is_series(x)
-
-def is_series_or_str(x):
-    return isinstance(x, str) or is_series(x)
-
-def is_not_series_or_str(x):
-    return not is_series_or_str(x)
-
-trimmed_messages = set()
-def print_norep(msg):
-    if not msg in trimmed_messages:
-        trimmed_messages.add(msg)
-        print(msg)
 
 
-def doTrim(data, silent=False, trim=True):
-    data = _doTrim(data, 'start', silent=silent, trim=trim)
-    data = _doTrim(data, 'end', silent=silent, trim=not trim is False)
-    return data
 
-def _doTrim(data, pos, silent=False, trim=True):
-    if trim is False or trim is None:
-        return data
-
-    # we should first dropna, as there is no point in trimming to a common date
-    # where some of the series starts with nan's
-    data = [s.dropna() if is_series(s) else s for s in data]
-
-    if pos == 'start':
-        agg = max
-        r_agg = min
-    else:
-        agg = min
-        r_agg = max
-    
-    # find common date
-    if trim is True:
-        if silent:
-            date = getCommonDate(data, pos, agg=agg)
-        else:
-            date, max_fault = getCommonDate(data, pos, agg=agg, get_fault=True)
-    elif is_series(trim):
-        date = trim.index[0]
-        max_fault = trim.name
-    elif isinstance(trim, pd.Timestamp) or isinstance(trim, datetime.datetime) or isinstance(trim, datetime.date):
-        date = trim
-        max_fault = "date"
-    elif isinstance(trim, int):
-        date = datetime.datetime(trim, 1, 1)
-        max_fault = "year"
-    else:
-        raise Exception(f"unsupported trim type {type(trim)}")
-        
-    # nothing to trim
-    if date is None:
-        if not silent:
-            print("Unable to trim data")
-        return data
-
-    # trim
-    newArr = []
-    for s in data:
-        if is_series(s):
-            if pos == 'start':
-                s = s[date:]
-            else:
-                s = s[:date]
-            if s.shape[0] == 0:
-                continue
-        elif isinstance(s, list):
-            if pos == 'start':
-                s = [x[date:] for x in s]
-            else:
-                s = [x[:date] for x in s]
-            s = [x for x in s if x.shape[0] > 0]
-        elif isinstance(s, numbers.Real) or isinstance(s, pd.Timestamp):
-            pass
-        else:
-            warn(f"not trimming type {type(s)}, {s}")
-        newArr.append(s)
-
-    # report results
-    if not silent:
-        min_date, min_fault = getCommonDate(data, pos, agg=r_agg, get_fault=True)
-        if min_date != date:
-            msg = f"trimmed |{pos}| data from {min_date:%Y-%m-%d} [{min_fault}] to {date:%Y-%m-%d} [{max_fault}]"
-            if not msg in trimmed_messages:
-                trimmed_messages.add(msg)
-                print(msg)
-
-    return newArr
 
 def trimBy(trimmed, by):
     not_list = False
@@ -2109,7 +598,7 @@ def do_sort(data):
     sers = sorted(sers, key=lambda x: x.index[0])
     return sers + non_sers
 
-def show(*data, trim=True, align=True, align_base=None, ta=True, cache=None, mode=None, source=None, remode=None, untrim=None, silent=False, **plotArgs):
+def show(*data, trim=True, trim_end=True, align=True, align_base=None, ta=True, cache=None, mode=None, source=None, remode=None, untrim=None, silent=False, sort=True, **plotArgs):
     getArgs = {}
     if not mode is None:
         getArgs["mode"] = mode
@@ -2142,19 +631,30 @@ def show(*data, trim=True, align=True, align_base=None, ta=True, cache=None, mod
             items.append(x)
     data = items
     data = doClean(data)
+    data = [s for s in data if not is_series(s) or len(s) > 0]
+    
     dataSeries = [s for s in data if is_series(s)]
-    if not ta:
+    if ta == False:
         trim = False
         align = False
+    elif ta == 'rel':
+        trim = False
+        align = 'rel'
     if any([s[unwrap(s)<0].any() for s in dataSeries]):
         align = False
-    if trim: data = doTrim(data, trim=trim)
+    
+    if trim: 
+        data = doTrim(data, trim=trim, trim_end=trim_end)
+    
     if align:
         if align == "rel":
             data = align_rel(data, base=align_base)
         else:
             data = doAlign(data)
-    data = do_sort(data)
+    
+    if sort:
+        data = do_sort(data)
+    
     if not silent:
         plot(*data, **plotArgs)
     else:
@@ -2227,8 +727,6 @@ def show_scatter_returns(y_sym, x_sym, freq=None):
     
     show_scatter(x, y, fixed_aspect_ratio=True, xlabel=x_sym.name, ylabel=y_sym.name)
 
-def warn(*arg, **args):
-    print(*arg, file=sys.stderr, **args)
 
 
 def reduce_series(lst, g_func=None, y_func=None, x_func=None, trim=True):
@@ -2277,6 +775,10 @@ def reduce_series(lst, g_func=None, y_func=None, x_func=None, trim=True):
 #         r.names[0] = str(s.name)
 #     return res
 
+def get_func_name(f):
+    if hasattr(f, "__name__"):
+        return f.__name__
+    return "<unnamed function>" 
 # experimental
 def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_func=None, ret_func_names=None, trim=True, **args):
     y_func = y_func or ret_func
@@ -2293,12 +795,13 @@ def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_fu
     r = reduce_series(sers, g_func=g_func, y_func=y_func, x_func=x_func, trim=trim)
     def f_names(f):
         if isinstance(f, list):
-            return " ➜ ".join(lmap(lambda x: x.__name__, f))
+
+            return " ➜ ".join(lmap(lambda x: get_func_name(x), f))
         return f.__name__
     ylabel = " ➜ ".join(ret_func_names) if not ret_func_names is None else f_names(y_func)
     set_if_none(args, 'xlabel', f_names(x_func))
     set_if_none(args, 'ylabel', ylabel)
-    set_if_none(args, 'title', f"{sers[0].name.mode} {args['ylabel']} vs {args['xlabel']} [{f_names(g_func)}]")
+    set_if_none(args, 'title', f"{sers[0].name.mode} {args['ylabel']} <==> {args['xlabel']} [{f_names(g_func)}]")
     plot_scatter(*r, *non_ser, show_zero_point=True, **args)
 # e.g.:
 # show_risk_return2(*all, g_func=[ft.partial(get, despike=False), get])
@@ -2397,7 +900,7 @@ def show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all):
 def show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all, yield_func=None):
     yield_func = yield_func or get_curr_yield_rolling
     title = f"{all[0].name.mode} Yield vs PR mutual_dd_risk_rolling_SPY"
-    show_rr(*all, ret_func=yield_func, risk_func=mutual_dd_rolling_pr_SPY, title=title, ylabel=f"{all[0].name.mode} {yield_func.__name__}")
+    show_rr(3,4,5, *all, ret_func=yield_func, risk_func=mutual_dd_rolling_pr_SPY, title=title, ylabel=f"{all[0].name.mode} {yield_func.__name__}")
 
 def show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all):
     show_rr2(*all, 4, 5, 6, ret_func=[get_curr_yield_max, get_curr_yield_min], ret_func_names=['max', 'min'], risk_func=mutual_dd_rolling_pr_SPY)
@@ -2574,7 +1077,25 @@ def roll_ts(s, func, n, dropna=True):
     if dropna:
         res = res.dropna()
     return res
-    
+
+def shift(s, n):
+    if len(s) == 0:
+        return s
+    start = s.index[0]+n if n < 0 else s.index[0]
+    end = s.index[-1]+n if n > 0 else s.index[-1]
+    index = pd.date_range(start, end)
+    s = s.reindex(index)
+    return s.shift(n)
+
+def past(s, n):
+    return shift(s, n)
+
+def future(s, n):
+    return shift(s, -n)
+
+def mcagr_future(s, years=5):
+    return future(mcagr(s, n=365*years), 365*years)
+
 def mcagr(s, n=365, dropna=True):
     return name(roll_ts(s, cagr, n, dropna=dropna), s.name + " cagr")
 
@@ -3099,13 +1620,27 @@ def mean_logret_series(y):
 def liquidation(s):
     return (s/s[0]-1)*0.75+1
 
-def getMedianSer(lst):
-    df = pd.DataFrame([unwrap(s) for s in lst]).T
-    return wrap(df.median(axis=1), "median")
+def mean_series_perf(all):
+    df = pd.DataFrame(lmap(ret, all)).T.dropna(how='all')
+    ss = rpy(i_ret(df.mean(axis=1)))
+    return name(ss, "~mean perf")
 
-def getMeanSer(lst):
+def median_series_perf(all):
+    df = pd.DataFrame(lmap(ret, all)).T.dropna(how='all')
+    ss = rpy(i_ret(df.median(axis=1)))
+    return name(ss, "~median perf")
+
+def median_series(lst, align):
+    if align:
+        lst = doAlign(lst)
     df = pd.DataFrame([unwrap(s) for s in lst]).T
-    return wrap(df.mean(axis=1), "mean")
+    return name(rpy(df.median(axis=1)), "~median")
+
+def mean_series(lst, align):
+    if align:
+        lst = doAlign(lst)
+    df = pd.DataFrame([unwrap(s) for s in lst]).T
+    return name(rpy(df.mean(axis=1)), "~mean")
 
 def sdiv(a, b):
     if isinstance(a,list):
@@ -3622,21 +2157,30 @@ def show_yield_types(*lst, drop_special_divs=False, **args):
 def get_yield_true(sym):
     return get_yield(sym, type='true')
 
+def get_yield_true_no_fees(sym):
+    return get_yield(sym, type='true', reduce_fees=False)
+
 def get_yield_normal(sym):
     return get_yield(sym, type='normal')
+
+def get_yield_normal_no_fees(sym):
+    return get_yield(sym, type='normal', reduce_fees=False)
 
 def get_yield_rolling(sym):
     return get_yield(sym, type='rolling')
 
-def get_yield(sym, type=None, drop_special_divs=False):
+def get_yield_rolling_no_fees(sym):
+    return get_yield(sym, type='rolling', reduce_fees=False)
+
+def get_yield(sym, type=None, drop_special_divs=False, keep_trim=False, reduce_fees=True):
     type = type or 'true'
     if type == 'true':
-        return _get_yield(sym, window_months=1, drop_special_divs=drop_special_divs)
+        return _get_yield(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees)
     if type == 'normal':
-        yld_true = _get_yield(sym, window_months=1, drop_special_divs=drop_special_divs)
+        yld_true = _get_yield(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees)
         return mm(yld_true, 5)
     if type == 'rolling':
-        return _get_yield(sym, window_months=12, drop_special_divs=drop_special_divs)
+        return _get_yield(sym, window_months=12, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees)
     raise Exception(f"Invalid yield type {type}")
 
 # for each div, how any months passed from the previous div (the first one gets the same value as the second)
@@ -3655,12 +2199,14 @@ def rolling_timeframe(d, f, offset):
     res = pd.Series(vals, index)
     return res
 
-def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months=12, drop_special_divs=False):
+def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months=12, drop_special_divs=False, keep_trim=False, reduce_fees=True):
     # if isinstance(symbolName, tuple) and dists_per_year is None:
     #     symbolName, dists_per_year = symbolName
+    start = None
     if is_series(symbolName):
+        start = symbolName.index[0]
         symbolName = symbolName.name
-    if isinstance(symbolName, Symbol):
+    if is_symbol(symbolName):
         sym_mode = symbolName.mode
     else:
         sym_mode = None
@@ -3671,6 +2217,9 @@ def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months
     divs = divs[divs>0]
     if len(divs) == 0:
         return divs
+    if keep_trim and start:
+        price = price[start:]
+        divs = divs[start:]
 
     if drop_special_divs:
         vc = divs.index.day.value_counts()
@@ -3700,6 +2249,9 @@ def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months
 
     divs, price = sync(divs, price)
 
+    if len(divs) == 1 and window_months == 1: # we can't get_divs_intervals
+        return divs[0:0]
+
     if window_months > 1:
         mult = 12 / window_months # annualizer
         offset = pd.DateOffset(months=window_months-1, days=15)
@@ -3710,7 +2262,11 @@ def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months
         mult = 12 / divs_intervals # annualizer
         yld = divs * mult / price * 100
 
-    return name(yld, divs.name).dropna()
+    res = name(yld, symbolName).dropna()
+    if reduce_fees and sym_mode != "PR":
+        fees = etf_expense_ratio(symbolName)
+        res -= fees
+    return res
 
 def get_curr_yield_max(s):
     return max([get_curr_yield_true(s), get_curr_yield_normal(s), get_curr_yield_rolling(s)])
@@ -3721,18 +2277,40 @@ def get_curr_yield_min(s):
 def get_curr_yield_true(s):
     return get_curr_yield(s, type='true')
 
+def get_curr_yield_true_no_fees(s):
+    return get_curr_yield(s, type='true', reduce_fees=False)
+
 def get_curr_yield_normal(s):
     return get_curr_yield(s, type='normal')
 
-def get_curr_yield_rolling(s):
+def get_curr_yield_normal_no_fees(s):
+    return get_curr_yield(s, type='normal', reduce_fees=False)
+
+def get_start_yield_normal(s):
+    return get_start_yield(s, type='normal')
+
+def get_start_yield_normal_no_fees(s):
+    return get_start_yield(s, type='normal', reduce_fees=False)
+
+def get_curr_yield_rolling(s, reduce_fees=True):
     return get_curr_yield(s, type='rolling')
 
-def get_curr_yield(s, type=None):
+def get_curr_yield_rolling_no_fees(s):
+    return get_curr_yield(s, type='rolling', reduce_fees=False)
+
+def get_curr_yield(s, type=None, reduce_fees=True):
     type = type or 'rolling'
-    yld = get_yield(s, type=type).dropna()
+    yld = get_yield(s, type=type, reduce_fees=reduce_fees).dropna()
     if yld.shape[0] == 0:
         return 0
     return yld[-1]
+
+def get_start_yield(s, type=None, reduce_fees=True):
+    type = type or 'rolling'
+    yld = get_yield(s, type=type, keep_trim=True, reduce_fees=reduce_fees).dropna()
+    if yld.shape[0] == 0:
+        return 0
+    return yld[0]
 
 def get_curr_net_yield(s, type=None):
     return get_curr_yield(s, type=type)*0.75
@@ -3831,6 +2409,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all)
     show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all)
     show_rr__yield_min_cagrpr__mutual_dd_rolling_pr_SPY(*all)
+    show_rr2(*all, ret_func=[get_curr_yield_rolling_no_fees, get_curr_yield_rolling], risk_func=mutual_dd_rolling_pr_SPY)
     show_rr__yield_cagrpr__ulcerpr_trim(*all)
     
     if detailed:
@@ -3935,41 +2514,7 @@ def despike(s, std=8, window=30, shift=10):
     #     print(f"{s.name} was despiked")
     return s
 
-def get_date(x):
-    if is_series(x):
-        return x.index[0]
-    elif isinstance(x, int):
-        return datetime.datetime(x, 1, 1)
-    elif isinstance(x, pd.Timestamp) or isinstance(x, datetime.datetime) or isinstance(x, datetime.date):
-        return x
-    raise Exception(f"not supported date type {type(x)}")
 
-
-def filterByStart(lst, start=None):
-    if start is None:
-        return lst
-    start = get_date(start)
-    res = [s for s in lst if not s is None and len(s) > 0 and s.index[0] <= start]
-    dropped = [s for s in lst if s is None or len(s) == 0 or s.index[0] > start]
-    
-    #dropped = set(lst) - set(res)
-    if len(dropped) > 0:
-        dropped = ['None' if s is None else s.name  for s in dropped]
-        print(f"start dropped: {', '.join(dropped)}")
-    return res        
-
-def filterByEnd(lst, end=None):
-    if end is None:
-        return lst
-    end = get_date(end)
-    res = [s for s in lst if not s is None and s.index[-1] >= end]
-    dropped = [s for s in lst if s is None or s.index[-1] < end]
-    
-    #dropped = set(lst) - set(res)
-    if len(dropped) > 0:
-        dropped = ['None' if s is None else s.name  for s in dropped]
-        print(f"end dropped: {', '.join(dropped)}")
-    return res        
 
 def tr(s):
     return get(s, mode="TR")
@@ -4068,39 +2613,6 @@ def modes(s, **get_args):
 # those numbers will become NaN's.
 def series_as_float(ser):
     return pd.to_numeric(ser.astype(str).str.replace(",", "").str.replace("%", ""), errors="coerce")
-
-def lmap(f, l):
-    return list(map(f, l))
-
-def lfilter(f, l):
-    return list(filter(f, l))
-
-def flatten(lists):
-    return [x for lst in lists for x in lst]
-
-def flattenLists(items):
-    res = []
-    for x in items:
-        if isinstance(x, list):
-            res += x
-        elif isinstance(x, range) or isinstance(x, map) or isinstance(x, types.GeneratorType):
-            res += list(x)
-        else:
-            res.append(x)
-    return res
-
-def fixtext(s):
-    if isinstance(s, str):
-        return bidialg.get_display(s)
-    return [fixtext(x) for x in s]
-    
-
-def set_if_none(d, key, value):
-    v = d.get(key, None)
-    if v is None:
-        d[key] = value
-    return d
-        
 
 
 # In[ ]:
@@ -4553,11 +3065,6 @@ def show_rr__yield_ntr_pr_diff__pr(*lst, risk_func=cagr, alt_risk_func=pr_lr_cag
 
 ############################# python utils ###########
 
-def list_rm(l, *items):
-    l = l.copy()
-    for x in items:
-        l.remove(x)
-    return l    
 
 ############################
 
@@ -4757,4 +3264,90 @@ def get_all_cached_symbols():
 #list(iter_cached_symbols())
 #get_all_cached_symbols()
 
+#############################
+def mean_series_incremental(all, mode, mean_func=mean_series):
+    all = get(all, mode=mode) # prefetch once
+    start_year = min([s.index[0].year for s in all])
+    end_year = max([s.index[0].year for s in all])
+    rng = range(start_year, end_year+1)
+    last_count = 0
+    res = []
+    for year in rng:
+        sers = get(all, start=year, trim=True, silent=True)
+        if len(sers) == last_count:
+            continue
+        last_count = len(sers)
+        mean_ser = mean_func(sers, align=True)
+        mean_ser = rpy(mean_ser).sname(str(year))
+        res.append(mean_ser)
+    return res
+
+def join_rel_align_series(all):
+    if len(all) == 0:
+        return all
+    all = sorted(all, key=lambda s: s.index[0])
+    base = all[0]
+    res = base.copy()
+    all = all[1:]
+    for s in all:
+        s = align_with(s, res)
+        res[s.index[0]:] = np.nan
+        res[s.index[0]:s.index[-1]] = s
+    return rpy(res).sname("~joined").dropna()
+
+def join_rel_align_mean_series_incremental(all, mode):
+    sers = mean_series_incremental(all, mode=mode)
+    return join_rel_align_series(sers)
+
+def join_rel_align_median_series_incremental(all, mode):
+    sers = mean_series_incremental(all, mode=mode, mean_func=median_series)
+    return join_rel_align_series(sers)
+
+def show_mean_series_incremental(all, mode="NTR"):
+    all_sers = mean_series_incremental(all, mode=mode)
+    all_joined = join_rel_align_series(all_sers)
+    show(align_rel(all_sers, base=all_joined), all_joined, ta=False, sort=False)
+#############################
+    
+etf_metadata_df = None
+import os.path
+
+def load_etf_metadata(fname="../../ETFs/etfs.msgpack"):
+    global etf_metadata_df
+    if not os.path.isfile(fname):
+        warn("etfs.msgpack not found")
+        return
+    etf_metadata_df = pd.read_msgpack(fname)
+    etf_metadata_df["mw_aum"] /= 1000000
+
+def etf_expense_ratio(s):
+    global etf_metadata_df
+    if etf_metadata_df is None:
+        return 0
+    ticker = get_ticker_name(s)
+    try:
+        data = etf_metadata_df.loc[ticker]
+    except:
+        warn(f"no ETF metadata for {ticker}")
+        return 0
+    fee = data["fees"]
+    if pd.isnull(fee):
+        fee = data["mw_fees"]
+        if pd.isnull(fee):
+            warn(f"no fee data found for {ticker} in ETF metadata")
+            return 0
+        else:
+            warn(f"only 'mw_fees' but no 'fees' for {ticker} in ETF metadata")
+    return fee
+
+
+
+
+
+#############################
+load_etf_metadata()
+#############################
+
+#############################
+from framework.cefs import *
 #############################
