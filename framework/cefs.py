@@ -8,8 +8,11 @@
 
 from framework.utils import *
 from framework.base import *
-from Retropy_framework import *
+from framework.meta_data import *
+from framework.stats_basic import *
+import Retropy_framework as frm
 
+# these lists and categories are based on cefconnect
 cef_highyield_taxable = 'ACP|ACV|AFT|AIF|ARDC|AVK|AWF|BBN|BCV|BGB|BGH|BGT|BGX|BHK|BIT|BKT|BLW|BSL|BTZ|CBH|CCD|CHI|CHY|CIF|CIK|DBL|DCF|DFP|DHF|DHY|DMO|DSL|DSU|DUC|EAD|ECC|ECF|EFF|EFL|EFR|EFT|EGF|EHT|ERC|EVF|EVG|EVV|EXD|FCT|FFC|MGF|MPV|NBB|NBD|NCV|NCZ|NHS|NSL|OPP|OXLC|PAI|PCF|PCI|PCM|PCN|PDI|PDT|PFD|PFL|PFN|PFO|PGP|PHD|PHK|PHT|PIM|PKO|PPR|PSF|PTY|RA|TLI|TSI|TSLF|VBF|VGI|VLT|VTA|VVR|WEA|WIA|WIW|XFLT|FIV|FLC|FMY|FPF|FRA|FSD|FT|FTF|GBAB|GDO|GFY|GGM|GHY|HFRO|HIO|HIX|HNW|HPF|HPI|HPS|HYB|HYI|HYT|IGI|IHIT|IHTA|INSI|ISD|IVH|JCO|JFR|JHA|JHB|JHD|JHI|JHS|JHY|JLS|JMM|JMT|JPC|JPI|JPS|JPT|JQC|JRO|JSD|KIO|LDP|MCI'
 cef_highyield_taxable = cef_highyield_taxable.split('|')
 
@@ -24,8 +27,8 @@ cef_non_us_other = cef_non_us_other.split('|')
 
 cef_all = cef_highyield_taxable + cef_municipal_tax_exempt + cef_us_equity + cef_non_us_other
 
-#cefs_bad_yahoo = ['EHT', 'DCF', 'JHY'] # these have broken/corrupt data in Yahoo
-cefs_bad_yahoo = ['EHT', 'DCF', 'JHY', 'CBH', 'CCD', 'FIV', 'JPT', 'JHD', 'EFL', 'HFRO', 'CBH'] # these have broken/corrupt data in Yahoo
+# these have broken/corrupt data in Yahoo
+cefs_bad_yahoo = ['EHT', 'DCF', 'JHY', 'CBH', 'CCD', 'FIV', 'JPT', 'JHD', 'EFL', 'HFRO', 'CBH', 'GGO', 'BST'] # these have broken/corrupt data in Yahoo
 
 cef_nav_map = {
     'ARDC': 'XADCX',
@@ -47,6 +50,9 @@ cef_nav_map = {
 def get_cef_nav_ticker(s):
     if is_series(s):
         s = s.name.ticker
+    nav = get_cef_meta(s, "nav_symbol")
+    if nav:
+        return nav
     nav = cef_nav_map.get(s, '')
     if not nav:
         nav = f'X{s}X'
@@ -61,10 +67,16 @@ def get_cef_premium(s, source="Y"):
         warn(f'Unable to get NAV for {get_pretty_name(s)}')
         return None
     pr = get(s, source=source, mode="PR")
-    return (pr / nav - 1) * 100
+    return name((pr / nav - 1) * 100, f"{get_name(s)} premium")
 
 def show_cef_premium(*all):
-    show(1, lmap(get_cef_premium, all), ta=False, log=False)
+    frm.show(1, lmap(get_cef_premium, all), ta=False, log=False, title="Premium")
+
+def show_cef_zscore(*all):
+    frm.show(-2, -1, 1, 2, lmap(show_cef_zscore, all), ta=False, log=False, title="3y z-score")
+
+def show_cef_nav_and_pr(*all):
+    frm.show(lmap(get_cef_nav, all), lmap(pr, all), ta=False, title="NAV and Price")
 
 def get_cef_curr_premium(s):
     p = get_cef_premium(s)
@@ -77,3 +89,45 @@ def get_cef_start_premium(s):
     if p is None:
         return None
     return p.dropna()[0]
+
+
+def get_cef_nav_yield_rolling_no_fees(s):
+    nav = get_cef_nav(s)
+    if nav is None:
+        return None
+    res = frm.get_yield(s, type='rolling', altPriceName=get_cef_nav_ticker(s)+"@Y", reduce_fees=False)
+    name(res, f"{res.name} NAV")
+    return res
+
+def get_cef_nav_yield_rolling(s):
+    nav = get_cef_nav(s)
+    if nav is None:
+        return None
+    res = frm.get_yield(s, type='rolling', altPriceName=get_cef_nav_ticker(s)+"@Y", reduce_fees=True)
+    name(res, f"{res.name} NAV")
+    return res
+
+def get_cef_curr_nav_yield_rolling_no_fees(s):
+    res = get_cef_nav_yield_rolling_no_fees(s)
+    return 0 if res is None or len(res) == 0 else res[-1]
+
+def get_cef_cur_nav_yield_rolling(s):
+    res = get_cef_nav_yield_rolling(s)
+    return 0 if res is None or len(res) == 0 else res[-1]
+
+def get_cef_zscore(s, period=365*3):
+    p = get_cef_premium(s)
+    if p is None:
+        return None
+    p_avg = ma(p, period)
+    p_std = mstd(p, period)
+    p_zscore = (p-p_avg)/p_std
+    return name(p_zscore, f"{get_name(s)} zscore")
+
+def get_cef_curr_zscore(s, period=365*3):
+    res = get_cef_zscore(s, period=period)
+    return None if res is None or len(res) == 0 else res[-1]
+
+def show_cef_zscore(*all):
+    frm.show(-2, -1, 1, 2, lmap(get_cef_zscore, all), ta=False, log=False, title="3y z-score")
+

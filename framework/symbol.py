@@ -1,4 +1,9 @@
+from framework.utils import *
 from framework.RpySeries import *
+import framework.meta_data_dfs as meta
+
+def get_ticker_name(s):
+    return get_name(s, ticker=True)
 
 class Symbol(str):
     def __init__(self, fullname):
@@ -43,6 +48,8 @@ class Symbol(str):
             res = self.fullname
         if hasattr(self, "mode") and self.mode:
             res = f"{res} {self.mode}"
+        if meta.is_cef_ticker(self):
+            res = f"{res}*"
         return res
 
     @property
@@ -106,9 +113,6 @@ def get_pretty_name(s):
 def get_pretty_name_no_mode(s):
     return get_name(s, use_sym_name=False, nomode=True)
 
-def get_ticker_name(s):
-    return get_name(s, ticker=True)
-
 def get_name(s, use_sym_name=False, nomode=False, nick_or_name=False, ticker=False):
     if s is None:
         return ""
@@ -141,3 +145,29 @@ def get_mode(s):
         return s.mode
     return ''
 
+def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=False):
+    res = []
+    for k, v in d.items():
+        if drop_zero and v == 0:
+            continue
+        if drop_100 and v == 100:
+            res.append(f"{getName(k, use_sym_name=use_sym_name)}")
+        else:
+            res.append(f"{getName(k, use_sym_name=use_sym_name)}:{round(v, rnd)}")
+    return "|".join(res)
+
+def names(all):
+    return lmap(get_name, all)
+
+def name(s, n):
+    if is_series(s):
+        if is_symbol(n):
+            s.name = n
+        elif is_symbol(s.name):
+            sym = Symbol(s.name.fullname_nonick + "=" + n)
+            sym.mode = s.name.mode
+            sym.rebal = s.name.rebal
+            s.name = sym
+        else:
+            s.name = n
+    return s

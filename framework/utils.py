@@ -1,14 +1,21 @@
+import functools as ft
 import types
 import sys
 
 trimmed_messages = set()
-def print_norep(msg):
+def print_norep(msg, **args):
     if not msg in trimmed_messages:
         trimmed_messages.add(msg)
-        print(msg)
+        print(msg, **args)
 
 def warn(*arg, **args):
-    print(*arg, file=sys.stderr, **args)
+    set_if_none(args, "file", sys.stderr)
+    print_norep(*arg, **args)
+
+def get_func_name(f):
+    if hasattr(f, "__name__"):
+        return f.__name__
+    return "<unnamed function>" 
 
 def lmap(f, l):
     return list(map(f, l))
@@ -48,3 +55,13 @@ def list_rm(l, *items):
         if x in l:
             l.remove(x)
     return l    
+
+
+def compose(*functions):
+    return ft.reduce(lambda f, g: lambda x: f(g(x)), functions, lambda x: x)
+reduce = compose
+
+def partial(func, *args, **kwargs):
+    partial_func = ft.partial(func, *args, **kwargs)
+    ft.update_wrapper(partial_func, func)
+    return partial_func

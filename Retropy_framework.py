@@ -80,7 +80,14 @@ from IPython.display import clear_output, display
 from framework.utils import *
 from framework.base import *
 from framework.pca import *
-
+from framework.meta_data import *
+from framework.stats_basic import *
+from framework.stats import *
+from framework.RpySeries import *
+from framework.asset_classes import *
+import framework.cefs as cefs
+import framework.etfs as etfs
+import framework.etfs_high_yield as etfs_high_yield
 
 # In[ ]:
 
@@ -275,38 +282,6 @@ if not "Wrapper" in locals():
         def __rmul__(self, other):
             return Wrapper.doop(self, other, "*", lambda x, y: x * y, right=True)
 
-def wrap(s, name=""):
-    return s
-
-    name = name or s.name
-    #if not name:
-    #    raise Exception("no name")
-    if isinstance(s, pd.Series):
-        s = Wrapper(s)
-        s.name = name
-    elif isinstance(s, Wrapper):
-        s.name = name
-    return s
-
-def unwrap(s):
-    if isinstance(s, Wrapper):
-        return s.s
-    return s
-
-    
-def rename(s, n):
-    return name(s.copy(), n)
-def dict_to_port_name(d, rnd=1, drop_zero=False, drop_100=False, use_sym_name=False):
-    res = []
-    for k, v in d.items():
-        if drop_zero and v == 0:
-            continue
-        if drop_100 and v == 100:
-            res.append(f"{getName(k, use_sym_name=use_sym_name)}")
-        else:
-            res.append(f"{getName(k, use_sym_name=use_sym_name)}:{round(v, rnd)}")
-    return "|".join(res)
-    
 
 # error in ('raise', 'ignore'), ignore will return None
 
@@ -412,6 +387,10 @@ def plot(*arr, log=True, title=None, legend=True, lines=True, markers=False, ann
         d = d.y
         if isinstance(d, tuple): # for named numbers
             continue
+        if d is None:
+            continue
+        if isinstance(d, np.ndarray):
+            d = d[~pd.isnull(d)]
         if np.any(d <= 0):
             log = False
             
@@ -516,70 +495,6 @@ def plotly_area(df, title=None):
 
 
 
-def trimBy(trimmed, by):
-    not_list = False
-    if not isinstance(trimmed, list):
-        not_list = True
-        trimmed = [trimmed]
-    if not isinstance(by, list):
-        by = [by]
-    if len(by) == 0:
-        return []
-    start = max(s.index[0] for s in by)
-    res = [s[start:] for s in get(trimmed)]
-    if not_list:
-        return res[0]
-    return res
-
-def sync(a, b):
-    idx = a.index.intersection(b.index)
-    a = a.reindex(idx)
-    b = b.reindex(idx)
-    return a, b
-
-def doAlign(data):
-    date = getCommonDate(data, 'start')
-    if date is None:
-        return data
-    newArr = []
-    for s in data:
-        if is_series(s):
-            #s = s / s[date] # this can sometime fail for messing data were not all series have the same index
-            base = s[date:]
-            if base.shape[0] == 0:
-                continue
-            if base[0] != 0:
-                s = s / base[0]
-        newArr.append(s)
-    return newArr
-
-def align_with(s, w):
-    if s.index[0] in w:
-        return s * w[s.index[0]] / s[0]
-    if w.index[0] in s:
-        return s * w[0] / s[w.index[0]]
-    raise Exception(f"Cannot align {get_pretty_name(s)} with {get_pretty_name(w)}, no common start date found")
-
-def align_rel(all, base=None):
-    if len(all) == 0:
-        return all
-    non_series = lfilter(is_not_series_or_str, all)
-    all = lfilter(is_series_or_str, all)
-    all = sorted(all, key=lambda s: s.index[0])
-    if base is None:
-        base = all[0]
-        base = base / base[0]
-        res = [base]
-        all = all[1:]
-    else:
-        base = base / base[0]
-        res = []
-    for s in all:
-        s = align_with(s, base)
-        res.append(s)
-    #    base = s
-    return res + non_series
-
 def doClean(data):
     return [s.dropna() if is_series(s) else s for s in data]
 
@@ -663,7 +578,7 @@ def show(*data, trim=True, trim_end=True, align=True, align_base=None, ta=True, 
 def show_series(s, **args):
     show_scatter(range(len(s)), s.values, lines=True, annotations=s.index, show_zero_point=False, **args)
     
-def show_scatter(xs, ys, setlim=True, lines=False, color=None, annotations=None, xlabel=None, ylabel=None, label=None, fixed_aspect_ratio=False, show_zero_point=False, fixtext=False, figure=False):
+def show_scatter(xs, ys, setlim=True, lines=False, color=None, annotations=None, xlabel=None, ylabel=None, label=None, same_ratio=False, show_zero_point=False, fixtext=False, figure=False):
     def margin(s, m=0.05, show_zero_point=False):
         mn = min(s)
         mx = max(s)
@@ -680,7 +595,7 @@ def show_scatter(xs, ys, setlim=True, lines=False, color=None, annotations=None,
         if "name" in dir(xs[0]) or "s" in dir(xs[0]):
             annotations = [s.name for s in xs]
     if figure:
-        if fixed_aspect_ratio:
+        if same_ratio:
             plt.figure(figsize=(12, 12))
         else:
             plt.figure(figsize=(16, 12))
@@ -689,7 +604,7 @@ def show_scatter(xs, ys, setlim=True, lines=False, color=None, annotations=None,
     else:
         plt.scatter(xs, ys, color=color, label=label)
     if setlim:
-        if fixed_aspect_ratio:
+        if same_ratio:
             xmin, xmax = margin(xs, show_zero_point=show_zero_point)
             ymin, ymax = margin(ys, show_zero_point=show_zero_point)
             mn, mx = min(xmin, ymin), max(xmax, ymax)
@@ -725,7 +640,7 @@ def show_scatter_returns(y_sym, x_sym, freq=None):
         
     x, y = logret(x), logret(y)
     
-    show_scatter(x, y, fixed_aspect_ratio=True, xlabel=x_sym.name, ylabel=y_sym.name)
+    show_scatter(x, y, same_ratio=True, xlabel=x_sym.name, ylabel=y_sym.name)
 
 
 
@@ -775,10 +690,6 @@ def reduce_series(lst, g_func=None, y_func=None, x_func=None, trim=True):
 #         r.names[0] = str(s.name)
 #     return res
 
-def get_func_name(f):
-    if hasattr(f, "__name__"):
-        return f.__name__
-    return "<unnamed function>" 
 # experimental
 def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_func=None, ret_func_names=None, trim=True, **args):
     y_func = y_func or ret_func
@@ -795,9 +706,8 @@ def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_fu
     r = reduce_series(sers, g_func=g_func, y_func=y_func, x_func=x_func, trim=trim)
     def f_names(f):
         if isinstance(f, list):
-
             return " ➜ ".join(lmap(lambda x: get_func_name(x), f))
-        return f.__name__
+        return get_func_name(f)
     ylabel = " ➜ ".join(ret_func_names) if not ret_func_names is None else f_names(y_func)
     set_if_none(args, 'xlabel', f_names(x_func))
     set_if_none(args, 'ylabel', ylabel)
@@ -815,9 +725,9 @@ def show_rr(*lst, ret_func=None, risk_func=None, trim=True, mode_names=False, **
     lst = [x if isinstance(x, list) else [x] for x in lst]
     res = [get_risk_return_series(x, ret_func=ret_func, risk_func=risk_func, mode_names=mode_names) for x in lst]
     args['show_zero_point'] = True
-    set_if_none(args, 'title',  f"{get_mode(lst[0][0])} {ret_func.__name__} vs {risk_func.__name__}")
-    set_if_none(args, 'xlabel', risk_func.__name__)
-    set_if_none(args, 'ylabel', ret_func.__name__)
+    set_if_none(args, 'title',  f"{get_mode(lst[0][0])} {get_func_name(ret_func)} <==> {get_func_name(risk_func)}")
+    set_if_none(args, 'xlabel', get_func_name(risk_func))
+    set_if_none(args, 'ylabel', get_func_name(ret_func))
     plot_scatter(*non_ser, *res, **args)
 
 showRiskReturn = show_rr # legacy
@@ -883,7 +793,7 @@ def show_rr_modes(*lst, ret_func=None, risk_func=None, modes=['TR', 'NTR', 'PR']
     
     ret_func = ret_func or cagr
     risk_func = risk_func or ulcer
-    title = title or f"modes {ret_func.__name__} vs {risk_func.__name__}"
+    title = title or f"modes {get_func_name(ret_func)} vs {get_func_name(risk_func)}"
     show_rr(*all, ret_func=ret_func, risk_func=risk_func, title=title, mode_names=True)
     #showRiskReturn(*ntr, ret_func=ret_func)
     #for a, b in zip(tr, ntr):
@@ -898,12 +808,16 @@ def show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all):
     show_rr(*all, risk_func=mutual_dd_rolling_pr_SPY, title=title)
 
 def show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all, yield_func=None):
-    yield_func = yield_func or get_curr_yield_rolling
+    yield_func = yield_func or get_curr_yield_min2
     title = f"{all[0].name.mode} Yield vs PR mutual_dd_risk_rolling_SPY"
-    show_rr(3,4,5, *all, ret_func=yield_func, risk_func=mutual_dd_rolling_pr_SPY, title=title, ylabel=f"{all[0].name.mode} {yield_func.__name__}")
+    show_rr(2, 3, 4, 5, *all, ret_func=yield_func, risk_func=mutual_dd_rolling_pr_SPY, title=title, ylabel=f"{all[0].name.mode} {get_func_name(yield_func)}")
+
+def show_rr_yield(*all, yield_func=None, risk_func=None):
+    yield_func = yield_func or get_curr_yield_min2
+    show_rr(2, 3, 4, 5, *all, ret_func=yield_func, risk_func=risk_func)
 
 def show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all):
-    show_rr2(*all, 4, 5, 6, ret_func=[get_curr_yield_max, get_curr_yield_min], ret_func_names=['max', 'min'], risk_func=mutual_dd_rolling_pr_SPY)
+    show_rr2(*all, 2, 3, 4, 5, ret_func=[get_curr_yield_max, get_curr_yield_min], ret_func_names=['max', 'min'], risk_func=mutual_dd_rolling_pr_SPY)
 
 def show_rr__yield_types__ulcer(*lst, ret_func=None, types=['true', 'normal', 'rolling'], mode="TR", title=None):
     def get_data(lst, type):
@@ -1048,21 +962,6 @@ def mix(s1, s2, n=10, do_get=False, **getArgs):
         res.append(x)
     return lmap(unwrap, res)
         
-def ma(s, n):
-    n = int(n)
-    return wrap(s.rolling(n).mean(), "ma({}, {})".format(s.name, n))
-
-def mm(s, n):
-    n = int(n)
-    return wrap(s.rolling(n).median(), "mm({}, {})".format(s.name, n))
-
-def mmax(s, n):
-    n = int(n)
-    return wrap(s.rolling(n).max(), "mmax({}, {})".format(s.name, n))
-
-def mmin(s, n):
-    n = int(n)
-    return wrap(s.rolling(n).min(), "mmin({}, {})".format(s.name, n))
 
 
 # https://stackoverflow.com/questions/38878917/how-to-invoke-pandas-rolling-apply-with-parameters-from-multiple-column
@@ -1087,26 +986,6 @@ def shift(s, n):
     s = s.reindex(index)
     return s.shift(n)
 
-def past(s, n):
-    return shift(s, n)
-
-def future(s, n):
-    return shift(s, -n)
-
-def mcagr_future(s, years=5):
-    return future(mcagr(s, n=365*years), 365*years)
-
-def mcagr(s, n=365, dropna=True):
-    return name(roll_ts(s, cagr, n, dropna=dropna), s.name + " cagr")
-
-def mstd(s, n=365, dropna=True):
-    res = name(ret(s).rolling(n).std()*math.sqrt(n)*100, s.name + " std")
-    if dropna:
-        res = res.dropna()
-    return res
-
-def msharpe(s, n=365, dropna=True):
-    return name(mcagr(s, n, dropna) / mstd(s, n, dropna), s.name + " sharpe")
 
 # def bom(s):
 #     idx = s.index.values.astype('datetime64[M]') # convert to monthly representation
@@ -1128,38 +1007,6 @@ def eoq(s): return s.asfreq("Q")
 def boy(s): return s.asfreq("YS")
 def eoy(s): return s.asfreq("Y")
     
-def ret(s):
-    return s.pct_change()
-
-def i_ret(s):
-    s = s.fillna(0)
-    return np.cumprod(s + 1)
-
-def logret(s, dropna=True, fillna=False):
-    res = np.log(s) - np.log(s.shift(1))
-    if "name" in dir(res) and s.name:
-        res.name = "logret(" + s.name + ")"
-    if fillna:
-        res[0] = 0
-    elif dropna:
-        res = res.dropna()
-    return res
-
-# we sometimes get overflow encountered in exp RuntimeWarning from i_logret, so we disable them
-np.seterr(over='ignore') 
-def i_logret(s):
-    res = np.exp(np.cumsum(s))
-    if np.isnan(s[0]):
-        res[0] = 1
-    return res
-
-def dd(x):
-    x = get(x).dropna()
-    res = (x / np.maximum.accumulate(x) - 1) * 100
-    return res
-    
-def percentile(s, p):
-    return s.quantile(p/100)   
 
 
 # In[ ]:
@@ -1581,36 +1428,6 @@ def lrret_mutual(*sources, base=None, show=True, max_n=None, **lrret_args):
         plt.legend()
         plt.show()
     
-def lr(y):
-    X = np.arange(y.shape[0])
-    X = sm.add_constant(X)
-    model = sm.OLS(y, X).fit()
-    pred = model.predict(X)
-    pred = name(pd.Series(pred, y.index), y.name + " fit")
-    return pred
-    
-def lr_beta(y, X=None, pvalue=False):
-    if X is None:
-        X = np.arange(y.shape[0])
-        X = sm.add_constant(X)
-        model = sm.OLS(y, X).fit()
-        if pvalue:
-            return model.params[1], model.pvalues[1]
-        return model.params[1]
-    else:
-        X = sm.add_constant(X)
-        model = sm.OLS(y, X).fit()
-        if pvalue:
-            return model.params[1], model.pvalues[1]
-        return model.params[1]
-    
-def lrret_beta(y, X, freq=None, pvalue=False):
-    y = get(y, freq=freq)
-    X = get(X, freq=freq)
-    y = logret(y)
-    X = logret(X)
-    y, X = sync(y, X)
-    return lr_beta(y, X, pvalue=pvalue)
 
 def mean_logret_series(y):
     res =  name(pd.Series(i_logret(np.full_like(y, logret(y).mean())), y.index), y.name + " mean logret")
@@ -1780,284 +1597,6 @@ def date(s):
 
 # In[5]:
 
-
-if not "fixed_globals_once" in globals():
-
-    # ************* SYMBOLS ***************
-    # these are shorthand variables representing asset classes
-
-    # ==== SPECIAL ====
-    # https://www.federalreserve.gov/pubs/bulletin/2005/winter05_index.pdf
-    # Nominal Daily
-    usdMajor = 'FRED/DTWEXM@Q' # Trade Weighted U.S. Dollar Index: Major Currencies
-    usdBroad = 'FRED/DTWEXB@Q' # Trade Weighted U.S. Dollar Index: Broad
-    usdOther = 'FRED/DTWEXO@Q' # Trade Weighted U.S. Dollar Index: Other Important Trading Partners
-    # Nominal Monthly
-    usdMajorM = 'FRED/TWEXMMTH@Q'
-    usdBroadM = 'FRED/TWEXBMTH@Q'
-    usdOtherM = 'FRED/TWEXOMTH@Q'
-    # Real Monthly
-    usdMajorReal = 'FRED/TWEXMPA@Q' # Real Trade Weighted U.S. Dollar Index: Major Currencies
-    usdBroadReal = 'FRED/TWEXBPA@Q' # Real Trade Weighted U.S. Dollar Index: Broad
-    usdOtherReal = 'FRED/TWEXOPA@Q' # Real Trade Weighted U.S. Dollar Index: Other Important Trading Partners
-    usd = usdBroad
-
-    cpiUS ='RATEINF/CPI_USA@Q'
-
-
-    #bitcoinAvg = price("BAVERAGE/USD@Q") # data 2010-2016
-    #bitcoinBitstamp = price("BCHARTS/BITSTAMPUSD@Q") # data 2011-now
-
-    # ==== STOCKS ====
-    # Global
-    g_ac = 'VTSMX:45|VGTSX:55' # VTWSX, VT # global all-cap
-    d_ac = 'URTH' # developed world
-    # US
-    ac = 'VTSMX' # VTI # all-cap
-    lc = 'VFINX' # VOO, SPY # large-cap
-    mc = 'VIMSX' # VO # mid-cap
-    sc = 'NAESX' # VB # small-cap
-    mcc = 'BRSIX' # micro-cap
-    lcv = 'VIVAX' # IUSV # large-cap-value
-    mcv = 'VMVIX' # mid-cap-value
-    scv = 'VISVX' # VBR # small-cap-value
-    lcg = 'VIGRX' # large-cap-growth 
-    mcg = 'VMGIX' # mid-cap-growth
-    scg = 'VISGX' # VBK # small-cap-growth
-    # ex-US
-    i_ac = 'VGTSX' # VXUS # intl' all-cap
-    i_sc = 'VINEX' # VSS, SCZ # intl' small-cap
-    i_dev = 'VTMGX' # EFA, VEA # intl' developed
-    i_acv = 'DFIVX' # EFV # intl' all-cap-value
-    i_scv = 'DISVX' # DLS # intl' small-cap-value
-    em_ac = 'VEIEX' # VWO # emerging markets
-#    em = em_ac # legacy
-    em_sc = 'EEMS' # emerging markets small cap
-    fr_ac = 'FRN' # FM # frontier markets
-
-    # ==== BONDS ====
-    # US GOVT
-    sgb = 'VFISX' # SHY, VGSH # short term govt bonds
-    tips = 'VIPSX' # TIP # inflation protected treasuries
-    lgb = 'VUSTX' # TLT, VGLT # long govt bonds
-    elgb = 'PEDIX@Y' # EDV # extra-long (extended duration) govt bonds, note PEDIX is missing it's divs in AV
-    gb = 'VFITX' # IEI # intermediate govt bonds
-    fgb = 'TFLO' # floating govt bonds
-    # US CORP 
-    cb = 'MFBFX' # LQD # corp bonds
-    scb = 'VCSH' # short-term-corp-bonds
-    lcb = 'VCLT' # long-term-corp-bonds
-    fcb = 'FLOT' # floating corp bonds
-    # US CORP+GOVT
-    gcb = 'VBMFX' # AGG, BND # govt/corp bonds
-    sgcb = 'VFSTX' # BSV # short-term-govt-corp-bonds
-    # International
-    i_tips = 'WIP' # # intl' local currency inflation protected bonds
-    i_gcbUsd = 'PFORX' # BNDX # ex-US govt/copr bonds (USD hedged)
-    i_gbLcl = 'BEGBX' # (getBwx()) BWX, IGOV # ex-US govt bonds (non hedged)
-#    i_gb = i_gbLcl # legacy
-    i_cb = 'PIGLX' # PICB, ex-US corp bonds
-    i_cjb = 'IHY' # intl-corp-junk-bonds
-    g_gcbLcl = 'PIGLX' # Global bonds (non hedged)
-    g_gcbUsd = 'PGBIX' # Global bonds (USD hedged)
-    g_sgcb = 'LDUR' # Global short-term govt-corp bonds
-    g_usgcb = 'MINT' # Global ultra-short-term govt-corp bonds
-    em_gbUsd = 'FNMIX' # VWOB, EMB # emerging market govt bonds (USD hedged)
-#    emb = em_gbUsd # legacy
-    em_gbLcl = 'PELBX' # LEMB, EBND, EMLC emerging-markets-govt-bonds (local currency) [LEMB Yahoo data is broken]
-    em_cjb = 'EMHY' # emerging-markets-corp-junk-bonds
-    cjb = 'VWEHX' # JNK, HYG # junk bonds
-#    junk = cjb # legacy
-    scjb = 'HYS' # short-term-corp-junk-bonds
-    aggg_idx = "LEGATRUU;IND@B" # AGGG.L Global bonds unhedged (TR - Total Return)
-
-    # ==== CASH ====
-    rfr = 'SHV' # BIL # risk free return (1-3 month t-bills)
-    cash = rfr # SHV # risk free return
-    cashLike = 'VFISX:30' # a poor approximation for rfr returns 
-
-    # ==== OTHER ====
-    fedRate = 'FRED/DFF@Q'
-    reit = 'DFREX' # VNQ # REIT
-    i_reit = 'RWX' # VNQI # ex-US REIT
-    g_reit = 'DFREX:50|RWX:50' # RWO # global REIT
-    gold = 'LBMA/GOLD@Q' # GLD # gold
-    silver = 'LBMA/SILVER@Q' # SLV # silver
-    palladium = 'LPPM/PALL@Q'
-    platinum = 'LPPM/PLAT@Q'
-    #metals = gold|silver|palladium|platinum # GLTR # precious metals (VGPMX is a stocks fund)
-    comm = 'DBC' # # commodities
-    oilWtiQ = 'FRED/DCOILWTICO@Q'
-    oilBrentQ = 'FRED/DCOILBRENTEU@Q'
-    oilBrentK = 'oil-prices@OKFN' # only loads first series which is brent
-    eden = 'EdenAlpha@MAN'
-
-    # ==== INDICES ====
-    spxPR = '^GSPC'
-    spxTR = '^SP500TR'
-    spx = spxPR
-    
-
-    # ==== TASE ====
-    # exactly the same data as from TASE, but less indices supported
-    ta125_IC = 'TA125@IC'
-    ta35_IC = 'TA35@IC'
-
-    # https://www.tase.co.il/he/market_data/indices
-    ta35 = "142@TASE = TA-35"
-    ta125 = "137@TASE = TA-125"
-    ta90 = "143@TASE = TA-90"
-    taSME60 = "147@TASE = TA-SME60"
-    telDiv = "166@TASE = TA-Div"
-    telAllShare = "168@TASE = TA-AllShare"
-    ta_stocks = [ta35, ta125, ta90, taSME60, telDiv, telAllShare]
-
-    taBonds = "601@TASE = IL-Bonds"
-    taGovtBonds = "602@TASE = TA-GovtBonds"
-    taCorpBonds = "603@TASE = TA-CorpBonds"
-    taTips = "604@TASE = TA-Tips"
-    taGovtTips = "605@TASE = TA-GovtTips"
-    taCorpTips = "606@TASE = TA-CorpTips"
-    ta_bonds = [taBonds, taGovtBonds, taCorpBonds, taTips, taGovtTips, taCorpTips]
-
-    telCorpBond60ILS = "720@TASE = TA-CorpBond60ILS"
-    telCorpBondUsd = "739@TASE = TA-CorpBondUsd"
-    telCorpBond20 = "707@TASE = TA-CorpBond20"
-    telCorpBond40 = "708@TASE = TA-CorpBond40"
-    telCorpBond60 = "709@TASE = TA-CorpBond60"
-    ta_corpBonds = [telCorpBond20, telCorpBond40, telCorpBond60, telCorpBond60ILS, telCorpBondUsd]
-
-    taMakam = "800@TASE = TA-Makam"
-    ta_makam = [taMakam]
-
-    ta_all = ta_stocks + ta_bonds + ta_corpBonds + ta_makam    
-    # ==== TASE END ====
-    
-    
-    
-    glb = globals().copy()
-    for k in glb.keys():
-        if k.startswith("_"):
-            continue
-        val = glb[k]
-        if not isinstance(val, str):
-            continue
-        if "\n" in val:
-            continue
-        if k.isupper():
-            continue
-        if "=" in val:
-            continue
-        globals()[k] = f"{val} = {k}"
-    
-    fixed_globals_once = True
-
-all_assets = [
-# ==== STOCKS ====
-# Global
-d_ac,
-# US
-ac,
-lc,
-mc,
-sc,
-mcc,
-lcv,
-mcv,
-scv,
-lcg,
-mcg,
-scg,
-# ex-US
-i_ac,
-i_sc,
-i_dev,
-i_acv,
-i_scv,
-em_ac,
-em_sc,
-fr_ac,
-
-# ==== BONDS ====
-# US GOVT
-sgb,
-tips,
-lgb,
-elgb,
-gb,
-fgb,
-# US CORP 
-cb,
-scb,
-lcb,
-fcb,
-# US CORP+GOVT
-gcb,
-sgcb,
-# International
-i_tips,
-i_gcbUsd,
-i_gbLcl,
-i_cb,
-i_cjb,
-g_gcbLcl,
-g_gcbUsd,
-g_sgcb,
-g_usgcb,
-em_gbUsd,
-em_gbLcl,
-em_cjb,
-cjb,
-scjb,
-
-# ==== CASH ====
-rfr,
-
-# ==== OTHER ====
-#fedRate,
-reit,
-i_reit,
-gold,
-silver,
-palladium,
-platinum,
-#metals,
-comm,
-oilWtiQ,
-oilBrentQ,
-]
-
-assets_core = [
-    # equities
-    lc,
-    i_ac,
-    i_dev,
-    em_ac,
-    # reit
-    reit,
-    i_reit,
-    # bonds
-    gb,
-    lgb,
-    cb,
-    i_cb,
-    em_gbUsd,
-    tips,
-    # commodities
-    gold,
-    comm,
-    # cash
-    cash
-]
-
-# https://www.federalreserve.gov/pubs/bulletin/2005/winter05_index.pdf
-usdMajorCurrencies = ["USDEUR", "USDCAD", "USDJPY", "USDGBP", "USDCHF", "USDAUD", "USDSEK"]
-usdOtherCurrencies = ["USDMXN", "USDCNY", "USDTWD", "USDKRW", "USDSGD", "USDHKD", "USDMYR", "USDBRL", "USDTHB", "USDINR"] # "USDPHP"
-usdBroadCurrencies = usdMajorCurrencies + usdOtherCurrencies
-
-interestingCurrencies = ["USDEUR", "USDCAD", "USDJPY", "USDAUD", "USDJPY", "USDCNY"]
-
-
 # another options for interception:
 # ```python
 # class VarWatcher(object):
@@ -2094,8 +1633,6 @@ interestingCurrencies = ["USDEUR", "USDCAD", "USDJPY", "USDAUD", "USDJPY", "USDC
 
 # In[ ]:
 
-def get_named(s, func):
-    return (func(s), f"{get_pretty_name(s)} {func.__name__}")
 
 # def divs(symbolName, period=None, fill=False):
 #     if isinstance(symbolName, tuple) and period is None:
@@ -2118,208 +1655,11 @@ def get_named(s, func):
 #     divs.name = divs.name + " divs"
 #     return divs
 
-def divs(symbolName, period=None, fill=False):
-    name = get_name(symbolName)
-    if name.startswith("~"):
-        divs = sym[-1:0] # we just want an empty series with DatetimeIndex
-        #divs = pd.Series(index=pd.DatetimeIndex(freq="D"))
-        divs.name = name
-    else:
-        divs = get(symbolName, mode="divs")
-        divs = divs[divs>0]
-    if period:
-        divs = wrap(divs.rolling(period).sum())
-    if fill:
-        price = get(symbolName)
-        divs = divs.reindex(price.index.union(divs.index), fill_value=0)
-    divs.name = divs.name + " divs"
-    return divs
-
-def get_divs_interval(divs):
-    divs = divs.resample("M").sum()
-    divs = divs[divs>0]
-    monthds_diff = (divs.index.to_series().diff().dt.days/30).dropna().apply(lambda x: int(round(x)))
-    monthds_diff = monthds_diff[-5:].median()
-    return monthds_diff
-
-def get_yield_types(sym, **args):
-    n = get_name(sym)
-    true_yield = name(get_yield(sym, type='true', **args), n + " true")
-    normal_yield = name(get_yield(sym, type='normal', **args), n + " normal")
-    rolling_yield = name(get_yield(sym, type='rolling', **args), n + " rolling")
-    return[true_yield, normal_yield, rolling_yield]
-
 def show_yield_types(*lst, drop_special_divs=False, **args):
     yields = lmap(partial(get_yield_types, drop_special_divs=drop_special_divs, **args), lst)
     rets = [get_named(x, cagr) for x in get(lst, trim=True)]
     show(*yields, rets, 0, ta=False, log=False, title=f"Yields {'without special divs' if drop_special_divs else ''}")
 
-def get_yield_true(sym):
-    return get_yield(sym, type='true')
-
-def get_yield_true_no_fees(sym):
-    return get_yield(sym, type='true', reduce_fees=False)
-
-def get_yield_normal(sym):
-    return get_yield(sym, type='normal')
-
-def get_yield_normal_no_fees(sym):
-    return get_yield(sym, type='normal', reduce_fees=False)
-
-def get_yield_rolling(sym):
-    return get_yield(sym, type='rolling')
-
-def get_yield_rolling_no_fees(sym):
-    return get_yield(sym, type='rolling', reduce_fees=False)
-
-def get_yield(sym, type=None, drop_special_divs=False, keep_trim=False, reduce_fees=True):
-    type = type or 'true'
-    if type == 'true':
-        return _get_yield(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees)
-    if type == 'normal':
-        yld_true = _get_yield(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees)
-        return mm(yld_true, 5)
-    if type == 'rolling':
-        return _get_yield(sym, window_months=12, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees)
-    raise Exception(f"Invalid yield type {type}")
-
-# for each div, how any months passed from the previous div (the first one gets the same value as the second)
-def get_divs_intervals(divs):
-    divs = divs.resample("M").sum()
-    divs = divs[divs>0]
-    monthds_diff = (divs.index.to_series().diff().dt.days/30).fillna(method='backfill').apply(lambda x: int(round(x)))
-    return monthds_diff
-
-def rolling_timeframe(d, f, offset):
-    vals = []
-    index = d[d.index[0] + offset:].index
-    for dt in index:
-    #    print(f"start: {dt - pd.DateOffset(years=1)}, end: {dt}")
-        vals.append(f(d[(d.index <= dt) & (d.index > dt - offset)]))
-    res = pd.Series(vals, index)
-    return res
-
-def _get_yield(symbolName, dists_per_year=None, altPriceName=None, window_months=12, drop_special_divs=False, keep_trim=False, reduce_fees=True):
-    # if isinstance(symbolName, tuple) and dists_per_year is None:
-    #     symbolName, dists_per_year = symbolName
-    start = None
-    if is_series(symbolName):
-        start = symbolName.index[0]
-        symbolName = symbolName.name
-    if is_symbol(symbolName):
-        sym_mode = symbolName.mode
-    else:
-        sym_mode = None
-    if symbolName.startswith("~"):
-        return pd.Series()
-    price = get(altPriceName or symbolName, mode="PR")
-    divs = get(symbolName, mode="divs")
-    divs = divs[divs>0]
-    if len(divs) == 0:
-        return divs
-    if keep_trim and start:
-        price = price[start:]
-        divs = divs[start:]
-
-    if drop_special_divs:
-        vc = divs.index.day.value_counts()
-        vc = vc.reindex(range(31))
-        df = pd.DataFrame([vc, vc.shift(1), vc.shift(-1)]).T.fillna(0)
-        special_divs_days = set(df[(df.iloc[:, 0] > 0) & (df.iloc[:, 0] <= 2) & (df.iloc[:, 1] == 0) & (df.iloc[:, 2] == 0)].index)
-        dropped_divs = divs[divs.index.day.isin(special_divs_days)]
-        if dropped_divs.shape[0] > 0:
-            dates = ', '.join([str(x)[:10] for x in dropped_divs.index.values])
-            print_norep(f"Dropped {dropped_divs.shape[0]} special dividends in {get_pretty_name(symbolName)} on {dates}")
-        divs = divs[~divs.index.day.isin(special_divs_days)]
-    
-    if sym_mode == "NTR":
-        divs *= 0.75
-    elif sym_mode == "PR":
-        divs *= 0
-
-
-    # sometimes 2 or more divs can happen in the same month (capital gains)
-    # we must resample and sum to 1-month resolution to correctly calculate the months_between_dists
-    # and later to correctly do a rolling sum
-    # NOTE: this causes a falw in the yield calculation
-    # the actual dividends are usually mid-month, while the resample changes the dates to end of month
-    # and thus later we divide by price at end of month, and not at the dividend date
-    divs = divs.resample("M").sum()
-    divs = divs[divs>0]
-
-    divs, price = sync(divs, price)
-
-    if len(divs) == 1 and window_months == 1: # we can't get_divs_intervals
-        return divs[0:0]
-
-    if window_months > 1:
-        mult = 12 / window_months # annualizer
-        offset = pd.DateOffset(months=window_months-1, days=15)
-        divs = rolling_timeframe(divs, lambda x: np.sum(x), offset)
-        yld = divs * mult / price * 100
-    else:
-        divs_intervals = get_divs_intervals(divs)
-        mult = 12 / divs_intervals # annualizer
-        yld = divs * mult / price * 100
-
-    res = name(yld, symbolName).dropna()
-    if reduce_fees and sym_mode != "PR":
-        fees = etf_expense_ratio(symbolName)
-        res -= fees
-    return res
-
-def get_curr_yield_max(s):
-    return max([get_curr_yield_true(s), get_curr_yield_normal(s), get_curr_yield_rolling(s)])
-
-def get_curr_yield_min(s):
-    return min([get_curr_yield_true(s), get_curr_yield_normal(s), get_curr_yield_rolling(s)])
-
-def get_curr_yield_true(s):
-    return get_curr_yield(s, type='true')
-
-def get_curr_yield_true_no_fees(s):
-    return get_curr_yield(s, type='true', reduce_fees=False)
-
-def get_curr_yield_normal(s):
-    return get_curr_yield(s, type='normal')
-
-def get_curr_yield_normal_no_fees(s):
-    return get_curr_yield(s, type='normal', reduce_fees=False)
-
-def get_start_yield_normal(s):
-    return get_start_yield(s, type='normal')
-
-def get_start_yield_normal_no_fees(s):
-    return get_start_yield(s, type='normal', reduce_fees=False)
-
-def get_curr_yield_rolling(s, reduce_fees=True):
-    return get_curr_yield(s, type='rolling')
-
-def get_curr_yield_rolling_no_fees(s):
-    return get_curr_yield(s, type='rolling', reduce_fees=False)
-
-def get_curr_yield(s, type=None, reduce_fees=True):
-    type = type or 'rolling'
-    yld = get_yield(s, type=type, reduce_fees=reduce_fees).dropna()
-    if yld.shape[0] == 0:
-        return 0
-    return yld[-1]
-
-def get_start_yield(s, type=None, reduce_fees=True):
-    type = type or 'rolling'
-    yld = get_yield(s, type=type, keep_trim=True, reduce_fees=reduce_fees).dropna()
-    if yld.shape[0] == 0:
-        return 0
-    return yld[0]
-
-def get_curr_net_yield(s, type=None):
-    return get_curr_yield(s, type=type)*0.75
-    
-def get_TR_from_PR_and_divs(pr, divs):
-    m = d / pr + 1
-    mCP = m.cumprod().fillna(method="ffill")
-    tr = pr * mCP
-    return wrap(tr, pr.name + " TR")
 
 def show_income(*all, smooth, inf_adj=False):
     income = lmap(partial(get_income, smooth=smooth), all)
@@ -2336,6 +1676,9 @@ def show_cum_income_relative(*all, base):
     base_income = get_cum_income(base)
     income = [sdiv(x, base_income) for x in income]
     show(income, ta=False, log=False, legend=False, title="relative cumulative net income")
+
+def show_rr__yield_fees__mutual_dd_rolling_pr_SPY(*all):
+    show_rr2(*all, ret_func=[get_curr_yield_rolling_no_fees, get_curr_yield_rolling], risk_func=mutual_dd_rolling_pr_SPY, title="Impact of fees on yield")
 
 def show_comp(target, base, extra=None, mode="NTR", despike=False):
     if extra is None:
@@ -2370,7 +1713,8 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     if few:
         show(*all, (1, 'start'), (0.5, '50% draw-down'), trim=False, align='rel', title=mode + " equity") # use 0.5 instead of 0 to keep the log scale
         show_modes(*all)
-        show(lmap(adj_inf, lmap(price, all)), 1, title="real price")
+        if detailed:
+            show(lmap(adj_inf, lmap(price, all)), 1, title="real price")
     if has_target_and_base:
         show_modes_comp(target, base)
         show_port_flow_comp(target, base)
@@ -2391,10 +1735,12 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
 
     # risk-return: cagr
     html_title("RR: cagr")
-    show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all)
-    # show_rr_cagr_dd_match_spy(*all_trim)
-
     bases = [mix(lc, gb, do_get=False), mix(i_ac, gb, do_get=False)]
+    all_with_bases = get(all + bases, mode=mode)
+    print("-------")
+    #show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all_with_bases)
+    show_rr(*all_with_bases, risk_func=mutual_dd_rolling_pr_SPY)
+
     if detailed:
         show_rr(*get(all + bases, mode="TR"))
         show_rr(*get(all + bases, mode="NTR"))
@@ -2402,19 +1748,29 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
         show_rr_modes(*all)
         show_rr_modes_mutual_dd_risk_rolling_SPY(*all)
     else:
-        show_rr(*get(all + bases, mode="NTR"))
+        show_rr(*all_with_bases, risk_func=ulcer_pr)
+        show_rr(*all_with_bases, risk_func=max_dd_pr)
+
+    # Yields
+    if few:
+        html_title("Yields")
+        show_yield_types(*all)
+        show_yield_types(*all, drop_special_divs=True)
 
     # risk-return: Yields
     html_title("RR: yield")
-    show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all)
+    show_rr_yield(*all, risk_func=mutual_dd_rolling_pr_SPY)
+    show_rr_yield(*all, risk_func=ulcer_pr)
+    show_rr_yield(*all, risk_func=max_dd)
+    # show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all)
     show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all)
+    show_rr__yield_fees__mutual_dd_rolling_pr_SPY(*all)
     show_rr__yield_min_cagrpr__mutual_dd_rolling_pr_SPY(*all)
-    show_rr2(*all, ret_func=[get_curr_yield_rolling_no_fees, get_curr_yield_rolling], risk_func=mutual_dd_rolling_pr_SPY)
     show_rr__yield_cagrpr__ulcerpr_trim(*all)
     
     if detailed:
         show_rr__yield_cagrpr__ulcerpr_notrim(*all)
-    show_rr__yield_types__ulcer(*all)
+        show_rr__yield_types__ulcer(*all)
     
     if detailed:
         show_rr_yield_tr_ntr(*all)
@@ -2428,15 +1784,17 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
         show_rr_yield_ntr_pr_diff_pr_full_alt(*all)
         show_rr_yield_ntr_pr_diff_pr_full_alt(*all, trim=False)
 
-
+    # zscores
+    html_title("z-scores")
+    display_zscores(*all)
 
     # withdraw flows
     html_title("RR: flows")
     show_rr_flows(*all)
 
-
     # risk-return: cross risks
     html_title("RR: cross-risks")
+    show_rr(*all, ret_func=ulcer_pr, risk_func=mutual_dd_rolling_pr_SPY)
     show_rr(*all, ret_func=max_dd_pr, risk_func=mutual_dd_rolling_pr_SPY)
     show_rr(*all, ret_func=mutual_dd_rolling_pr_TLT, risk_func=mutual_dd_rolling_pr_SPY, same_ratio=True)    
     show_rr2(*all, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=ulcer)
@@ -2448,33 +1806,16 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
 
 #######################
 
-    # Yields
-    if few:
-        html_title("Yields")
-        show_yield_types(*all)
-        show_yield_types(*all, drop_special_divs=True)
-
-    # if few:
-        # yields = lmap(get_yield_true, all)
-        # inf = get_inflation(365*7)[getCommonDate(yields, 'start', agg=min):]
-        # show(yields, inf, 0, ta=False, log=False, title="nominal TRUE gross yield")    
-        # yields = lmap(get_yield_normal, all)
-        # show(yields, inf, 0, ta=False, log=False, title="nominal NORMAL gross yield")    
-        # yields = lmap(get_yield_rolling, all)
-        # show(yields, inf, 0, ta=False, log=False, title="nominal ROLLING gross yield")    
-        
-        # yields = lmap(lambda x: get_real_yield(x, 'normal'), all)
-        # show(yields, 0, ta=False, log=False, title="REAL gross NORMAL yield")
-
     # Income
     html_title("Income")
     if few:
         show_income(*all, smooth=12)
-        show_income(*all, smooth=12, inf_adj=True)
         show_income(*all, smooth=3)
-        show_income(*all, smooth=3, inf_adj=True)
         show_income(*all, smooth=0)
-        show_income(*all, smooth=0, inf_adj=True)
+        if detailed:
+            show_income(*all, smooth=12, inf_adj=True)
+            show_income(*all, smooth=3, inf_adj=True)
+            show_income(*all, smooth=0, inf_adj=True)
 
         show_cum_income(*all)
         show_cum_income(*all_trim)
@@ -2486,15 +1827,48 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
 
     # lrret
     html_title("Mutual lrret")
-    lrret_mutual(*all)
+    if len(all) < 30:
+        lrret_mutual(*all)
 
     # PCA / MDS
     html_title("MDS")
-    show_mds(*all)
+    if len(all) < 30:
+        show_mds(*all)
+
+def show_dd_chunks(s, min_days=10, min_depth=1, dd_func=dd, mode="PR"):
+    s = get(s, mode=mode)
+    ranges = get_dds(s, min_days=min_days, min_depth=min_depth, dd_func=dd_func)
+    chunks = [s[i:j] for i,j,_ in ranges]
+    show_dd(*chunks, mode=mode, dd_func=dd_func, legend=False, title_prefix=f"chunked {get_pretty_name_no_mode(s)}")
+
+def show_dd_price_actions(target, base, min_days=0, min_depth=3, dd_func=dd_rolling):
+    # target = pr(target)
+    # base = pr(base)
+    # base_dd = dd_func(base)
+    # base_dd = trimBy(base_dd, target)
+    # # dd_target = dd_func(target)
+    # # base_dd, dd_target = doTrim([base_dd, dd_target], trim=True)
+    target, base = get([target, base], mode="PR", trim=True)
+    base_dd = dd_func(base)
+
+    ranges = get_dds(base, min_days=min_days, min_depth=min_depth, dd_func=dd_func)
+
+    if dd_func == dd:
+#        target_price_actions = get_price_actions(target, ranges)
+        target_price_actions = get_price_actions_with_rolling_base(target, ranges, base, n=0) # this is less efficient, but it takes care of alining the first draw-down
+    elif dd_func == dd_rolling:
+        target_price_actions = get_price_actions_with_rolling_base(target, ranges, base)
+    else:
+        raise Exception(f"unsupported dd_func: {get_func_name(dd_func)}")
+
+    #base_dd_actions = [base_dd[i:j] for i,j,_ in ranges]
+    show(base_dd, target_price_actions, -10, -20, -30, -40, -50, legend=False, ta=False, title=f"{get_func_name(dd_func)} price action {target.name} vs {base.name}")
+
+    print("mutual_dd_risk: ", mutual_dd(target, base, dd_func=dd_func, min_depth=min_depth))
 
 def show_dd(*all, mode="PR", dd_func=dd, legend=True, title_prefix=''):
     all = get(all, mode=mode)
-    show(lmap(dd_func, all), -10, -20, -30, -40, -50, ta=False, title=f"{title_prefix} {mode} {dd_func.__name__} draw-down", legend=legend)
+    show(lmap(dd_func, all), -10, -20, -30, -40, -50, ta=False, title=f"{title_prefix} {mode} {get_func_name(dd_func)} draw-down", legend=legend)
 
 def _despike(s, std, window, shift):
     if isinstance(s, list):
@@ -2516,15 +1890,6 @@ def despike(s, std=8, window=30, shift=10):
 
 
 
-def tr(s):
-    return get(s, mode="TR")
-
-def ntr(s):
-    return get(s, mode="NTR")
-
-def pr(sym):
-    return get(sym, mode="PR")
-price = pr
 
 def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True):
     start = None
@@ -2790,11 +2155,16 @@ def show_mds(*all, type=['cor', 'cov', 'beta', 'weight', 'R2']):
 # e.g.:
 # compose(cagr, despike, get)(SPY)
 # partial(get, mode="TR")(SPY)
-import functools as ft
-from functools import partial
-def compose(*functions):
-    return ft.reduce(lambda f, g: lambda x: f(g(x)), functions, lambda x: x)
 
+
+# def func(*functions, **args):
+#     if len(functions) > 1:
+#         f = compose(*functions)
+#     else:
+#         f = functions[0]
+#     if len(args) > 0:
+#         f = wrapped_partial(f, **args)
+#     return f
 
 #################### portfolio value and flow ############
 def port_value(s, flow=None, cash=100000):
@@ -2913,10 +2283,10 @@ def show_rr_flows(*all, n=None, rng=None):
     show_rr(*all, title="net flows")
 
 def show_rr__yield_min_cagrpr__mutual_dd_rolling_pr_SPY(*all):
-    show_rr2(2, 3, 4, 5, *all, y_func=[cagr_pr, lambda x: get_curr_yield_min(ntr(x))], x_func=mutual_dd_rolling_pr_SPY, xlabel="mutual_dd_rolling_pr_SPY", ylabel="PR CAGR ➜ min net yield")
+    show_rr2(2, 3, 4, 5, *all, y_func=[cagr_pr, lambda x: get_curr_yield_min2(ntr(x))], x_func=mutual_dd_rolling_pr_SPY, xlabel="mutual_dd_rolling_pr_SPY", ylabel="PR CAGR ➜ min net yield")
 
 def show_rr__yield_prcagr__ulcerpr(*all, trim=True, title="PR CAGR ➜ 12m net yield vs PR ulcer"):
-    show_rr2(2, 3, 4, 5, *all, trim=trim, g_func=pr, y_func=[cagr, lambda x: get_curr_yield_rolling(ntr(x))], title=title, xlabel="PR ulcer", ylabel="PR CAGR ➜ 12m net yield")
+    show_rr2(2, 3, 4, 5, *all, trim=trim, g_func=pr, y_func=[cagr, lambda x: get_curr_yield_min2(ntr(x))], title=title, xlabel="PR ulcer", ylabel="PR CAGR ➜ 12m net yield")
 
 def show_rr__yield_cagrpr__ulcerpr_trim(*all):
     all = get(all, trim=True)
@@ -2927,53 +2297,6 @@ def show_rr__yield_cagrpr__ulcerpr_notrim(*all):
     show_rr__yield_prcagr__ulcerpr(*all, trim=False, title="PR CAGR ➜ 12m net yield vs PR ulcer (no trim)")
 
 
-
-
-############### risk / return metrics ###############
-def max_dd(s):
-    return max(-dd(s))
-
-def max_dd_pr(s):
-    return max(-dd(pr(s)))
-
-def cagr(s):
-    days = (s.index[-1] - s.index[0]).days
-    if days <= 0:
-        return np.nan
-    years = days/365
-    val = s[-1] / s[0]
-    if val < 0:
-        raise Exception("Can't calc cagr for a negative value") # this indicates that the series is not an equity curve
-    return (math.pow(val, 1/years)-1)*100
-
-def cagr_pr(s):
-    return cagr(pr(s))
-
-def ulcer(x):
-    cmax = np.maximum.accumulate(x)
-    r = (x/cmax-1)*100
-    return math.sqrt(np.sum(r*r)/x.shape[0])
-
-# std of monthly returns
-def stdmret(s):
-    return ret(s).std()*math.sqrt(12)*100
-
-def pr_beta(s):
-    return lr_beta(price(s))
-
-def pr_cagr(s):
-    return cagr(price(s))
-
-def pr_lr_cagr(s):
-    x = lr(price(s))
-    x = x[x>0] # we won't be able to calc cagr for negative values
-    return cagr(x)
-
-def pr_cagr_full(s):
-    return cagr(get(s, untrim=True, mode="PR"))
-
-def lrretm_beta_SPY(s):
-    return lrret_beta(s, 'SPY', freq="M")
 
 
 
@@ -3061,7 +2384,7 @@ def show_rr__yield_ntr_pr_diff__pr(*lst, risk_func=cagr, alt_risk_func=pr_lr_cag
     add_base(15)
     res.append(5)
     title = title or f"PR Risk - NTR above PR Return"
-    plot_scatter(*res, title=title, xlabel=f"{risk_func.__name__} ➜ {alt_risk_func.__name__}", ylabel="cagr(NTR) - cagr(PR) ➜ curr 12m net yield", show_zero_point=True, same_ratio=True)
+    plot_scatter(*res, title=title, xlabel=f"{get_func_name(risk_func)} ➜ {get_func_name(alt_risk_func)}", ylabel="cagr(NTR) - cagr(PR) ➜ curr 12m net yield", show_zero_point=True, same_ratio=True)
 
 ############################# python utils ###########
 
@@ -3073,12 +2396,6 @@ def get_real(s):
 
 
 ###########################
-def dd_rolling(s, n=365):
-    m = s.rolling(n, min_periods=0).max()
-    d = (s/m - 1)*100
-    d.name = s.name
-    return d
-
 def dd_match(s, base):
     s_orig = s
     s, base = get([s, base], mode="PR", untrim=False) # NOTE: untrim makes a HUGE difference in results
@@ -3100,148 +2417,6 @@ def dd_match_SPY(x):
 
 #################################
 
-from collections import namedtuple
-dd_item = namedtuple("dd_item", ["start", "end", "depth"])
-
-def get_dds(s, min_days=0, min_depth=0, dd_func=dd):
-    min_depth = -abs(min_depth)
-    s_dd = dd_func(get(s))
-    ranges = []
-    in_dd = s_dd[0] < 0
-    dd_start = s_dd.index[0] if in_dd else None
-    prev_d = None
-    dd_depth = 0
-    for d, v in s_dd.iteritems():
-        if in_dd:
-            dd_depth = min(dd_depth, v)
-        if in_dd and v == 0:
-            in_dd = False
-            dd_end = d
-            ranges.append(dd_item(dd_start, dd_end, dd_depth))
-            dd_depth = 0
-        elif not in_dd and v < 0:
-            in_dd = True
-            dd_start = prev_d
-            dd_depth = v
-        prev_d = d
-    if in_dd:
-        ranges.append(dd_item(dd_start, s_dd.index[-1], dd_depth))
-
-    if min_days:
-        ranges = [r for r in ranges if r[1] - r[0] > pd.Timedelta(days=min_days)]
-    if min_depth:
-        ranges = [r for r in ranges if r[2] <= min_depth]
-    return ranges
-
-def get_price_actions(s, ranges):
-    return [(doAlign([s[i:j]])[0]-1)*100 for i, j, _ in ranges]
-
-def get_price_actions_with_rolling_base(target, ranges, base, n=365):
-    if n == 0:
-        base_max = np.maximum.accumulate(base) 
-    else:
-        base_max = base.rolling(n, min_periods=0).max()
-    res = []
-    for i,j,_ in ranges:
-        tt = target[i:j]
-        if len(tt) == 0:
-            continue
-        tt = align_with(tt, base[i:j])
-        tt = (tt/base_max[i:j] - 1)*100
-        tt.name = target.name
-        res.append(tt)
-    return res
-
-def mutual_dd(target, base, dd_func, weighted=True, min_depth=3):
-    # target, base = get([target, base], mode="PR", trim=True)
-    # base_dd = dd_func(base)
-    # ranges = get_dds(base, min_days=min_days, min_depth=min_depth, dd_func=dd_func)
-
-    tup = get([target, base], trim=True, silent=True) # was trim=False
-    if len(tup) < 2:
-        return 0
-    target, base = tup
-    ranges = get_dds(base, min_days=0, min_depth=min_depth, dd_func=dd_func)
-
-    if dd_func == dd:
-        target_price_actions = get_price_actions(target, ranges)
-    elif dd_func == dd_rolling:
-        target_price_actions = get_price_actions_with_rolling_base(target, ranges, base)
-    else:
-        raise Exception(f"unsupported dd_func: {dd_func.__name__}")
-    
-    dd_base = dd_func(base)
-    #dd_base = trimBy(dd_base, target) # was uncommented
-    base_dd_actions = [dd_base[i:j] for i,j,_ in ranges]
-
-    pa_target = [-s.sum() for s in target_price_actions]
-    pa_base = [-s.sum() for s in base_dd_actions]
-    
-    if weighted:
-        #return np.median([t/b for t,b in zip(pa_target, pa_base)])
-        #return np.mean([t/b for t,b in zip(pa_target, pa_base)])
-        weights = [np.sqrt(x) for x in pa_base]
-        return np.sum([w*t/b for t,b,w in zip(pa_target, pa_base, weights)]) / np.sum(weights)
-    else:
-        return np.sum(pa_target) / np.sum(pa_base)
-
-def mutual_dd_pr(target, base, dd_func):
-    return mutual_dd(pr(target), pr(base), dd_func=dd_func)
-
-def mutual_dd_rolling_pr(target, base):
-    return mutual_dd(pr(target), pr(base), dd_func=dd_rolling)
-
-def mutual_dd_rolling_pr_SPY(target):
-    return mutual_dd(pr(target), pr('SPY'), dd_func=dd_rolling)
-
-def mutual_dd_rolling_pr_SPY_weighted(target):
-    return mutual_dd(pr(target), pr('SPY'), dd_func=dd_rolling, weighted=True)
-
-def mutual_dd_rolling_pr_SPY_unweighted(target):
-    return mutual_dd(pr(target), pr('SPY'), dd_func=dd_rolling, weighted=False)
-
-def mutual_dd_rolling_pr_TLT(target):
-    return mutual_dd(pr(target), pr('TLT'), dd_func=dd_rolling)
-
-def mutual_dd_rolling_SPY(target):
-    return mutual_dd(target, get('SPY', mode=target.name.mode), dd_func=dd_rolling)
-
-def mutual_dd_pr_SPY(target):
-    return mutual_dd(pr(target), pr('SPY'), dd_func=dd)
-
-def mutual_dd_SPY(target):
-    return mutual_dd(target, get('SPY', mode=target.name.mode), dd_func=dd)
-
-def show_dd_chunks(s, min_days=10, min_depth=1, dd_func=dd, mode="PR"):
-    s = get(s, mode=mode)
-    ranges = get_dds(s, min_days=min_days, min_depth=min_depth, dd_func=dd_func)
-    chunks = [s[i:j] for i,j,_ in ranges]
-    show_dd(*chunks, mode=mode, dd_func=dd_func, legend=False, title_prefix=f"chunked {get_pretty_name_no_mode(s)}")
-
-def show_dd_price_actions(target, base, min_days=0, min_depth=3, dd_func=dd_rolling):
-    # target = pr(target)
-    # base = pr(base)
-    # base_dd = dd_func(base)
-    # base_dd = trimBy(base_dd, target)
-    # # dd_target = dd_func(target)
-    # # base_dd, dd_target = doTrim([base_dd, dd_target], trim=True)
-    target, base = get([target, base], mode="PR", trim=True)
-    base_dd = dd_func(base)
-
-    ranges = get_dds(base, min_days=min_days, min_depth=min_depth, dd_func=dd_func)
-
-    if dd_func == dd:
-#        target_price_actions = get_price_actions(target, ranges)
-        target_price_actions = get_price_actions_with_rolling_base(target, ranges, base, n=0) # this is less efficient, but it takes care of alining the first draw-down
-    elif dd_func == dd_rolling:
-        target_price_actions = get_price_actions_with_rolling_base(target, ranges, base)
-    else:
-        raise Exception(f"unsupported dd_func: {dd_func.__name__}")
-
-    #base_dd_actions = [base_dd[i:j] for i,j,_ in ranges]
-    show(base_dd, target_price_actions, -10, -20, -30, -40, -50, legend=False, ta=False, title=f"{dd_func.__name__} price action {target.name} vs {base.name}")
-
-    print("mutual_dd_risk: ", mutual_dd(target, base, dd_func=dd_func, min_depth=min_depth))
 
 #################################
 
@@ -3309,44 +2484,7 @@ def show_mean_series_incremental(all, mode="NTR"):
     show(align_rel(all_sers, base=all_joined), all_joined, ta=False, sort=False)
 #############################
     
-etf_metadata_df = None
-import os.path
 
-def load_etf_metadata(fname="../../ETFs/etfs.msgpack"):
-    global etf_metadata_df
-    if not os.path.isfile(fname):
-        warn("etfs.msgpack not found")
-        return
-    etf_metadata_df = pd.read_msgpack(fname)
-    etf_metadata_df["mw_aum"] /= 1000000
-
-def etf_expense_ratio(s):
-    global etf_metadata_df
-    if etf_metadata_df is None:
-        return 0
-    ticker = get_ticker_name(s)
-    try:
-        data = etf_metadata_df.loc[ticker]
-    except:
-        warn(f"no ETF metadata for {ticker}")
-        return 0
-    fee = data["fees"]
-    if pd.isnull(fee):
-        fee = data["mw_fees"]
-        if pd.isnull(fee):
-            warn(f"no fee data found for {ticker} in ETF metadata")
-            return 0
-        else:
-            warn(f"only 'mw_fees' but no 'fees' for {ticker} in ETF metadata")
-    return fee
-
-
-
-
-
-#############################
-load_etf_metadata()
-#############################
 
 #############################
 from framework.cefs import *

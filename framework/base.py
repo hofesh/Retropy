@@ -14,18 +14,6 @@ from framework.RpySeries import *
 from framework.data_sources import *
 
 
-def name(s, n):
-    if is_series(s):
-        if is_symbol(n):
-            s.name = n
-        elif is_symbol(s.name):
-            sym = Symbol(s.name.fullname_nonick + "=" + n)
-            sym.mode = s.name.mode
-            sym.rebal = s.name.rebal
-            s.name = sym
-        else:
-            s.name = n
-    return s
 
 def s_start(s):
     if s.shape[0] > 0:
@@ -63,6 +51,21 @@ def getCommonDate(data, pos, agg=max, get_fault=False):
         return val, fault
     return val
 
+def doAlign(data):
+    date = getCommonDate(data, 'start')
+    if date is None:
+        return data
+    newArr = []
+    for s in data:
+        if is_series(s):
+            #s = s / s[date] # this can sometime fail for messing data were not all series have the same index
+            base = s[date:]
+            if base.shape[0] == 0:
+                continue
+            if base[0] != 0:
+                s = s / base[0]
+        newArr.append(s)
+    return newArr
 
 
 def doTrim(data, silent=False, trim=True, trim_end=True):
@@ -403,6 +406,8 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
     
     if isinstance(symbol, tuple) or isinstance(symbol, map) or isinstance(symbol, types.GeneratorType):
         symbol = list(symbol)
+    if isinstance(symbol, set):
+        symbol = list(symbol)
     if isinstance(symbol, list):
         lst = symbol
         #if reget is None and trim == True:
@@ -578,3 +583,12 @@ def get_date(x):
     raise Exception(f"not supported date type {type(x)}")
 
 
+def tr(s):
+    return get(s, mode="TR")
+
+def ntr(s):
+    return get(s, mode="NTR")
+
+def pr(sym):
+    return get(sym, mode="PR")
+price = pr

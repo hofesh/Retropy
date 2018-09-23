@@ -21,6 +21,10 @@ from framework.cache import *
 import framework.conf as gconf
 import framework.mem as gmem
 
+# other data sources:
+# Investopedia:
+# https://www.investopedia.com/markets/api/partial/historical/?Symbol=VFINX&Type=Historical+Prices&Timeframe=Daily&StartDate=Apr+21%2C+1970&EndDate=May+21%2C+2018
+
 class DataSource:
     
     def __init__(self, source):
