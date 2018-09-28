@@ -85,6 +85,7 @@ from framework.stats_basic import *
 from framework.stats import *
 from framework.RpySeries import *
 from framework.asset_classes import *
+import framework.meta_data_dfs as meta_dfs
 import framework.cefs as cefs
 import framework.etfs as etfs
 import framework.etfs_high_yield as etfs_high_yield
@@ -716,7 +717,7 @@ def show_rr2(*lst, g_func=None, y_func=None, x_func=None, risk_func=None, ret_fu
 # e.g.:
 # show_risk_return2(*all, g_func=[ft.partial(get, despike=False), get])
 
-def show_rr(*lst, ret_func=None, risk_func=None, trim=True, mode_names=False, **args):
+def show_rr(*lst, ret_func=None, risk_func=None, trim=True, mode_names=False, lr_fit=False, same_ratio=False, **args):
     if ret_func is None: ret_func = cagr
     if risk_func is None: risk_func = ulcer
     non_ser = lfilter(lambda x: not(is_series_or_str(x) or isinstance(x, list)), lst)
@@ -724,10 +725,26 @@ def show_rr(*lst, ret_func=None, risk_func=None, trim=True, mode_names=False, **
     lst = get(lst, trim=trim)
     lst = [x if isinstance(x, list) else [x] for x in lst]
     res = [get_risk_return_series(x, ret_func=ret_func, risk_func=risk_func, mode_names=mode_names) for x in lst]
+    if lr_fit:
+        xs = [s.index[0] for s in res]
+        ys = [s.iloc[0] for s in res]
+        fit = lr(ys, xs, print_r2=True)
+        fit = fit.iloc[::len(fit)-1] # keep first and last only
+        fit.name = ''
+        res.insert(0, fit)
+    if same_ratio:
+        xs = [s.index[0] for s in res]
+        ys = [s.iloc[0] for s in res]
+        rng = [min(min(ys), 0), max(ys)]
+        f = pd.Series(rng, rng)
+        f.name = ''
+        res.insert(0, f)
+
     args['show_zero_point'] = True
     set_if_none(args, 'title',  f"{get_mode(lst[0][0])} {get_func_name(ret_func)} <==> {get_func_name(risk_func)}")
     set_if_none(args, 'xlabel', get_func_name(risk_func))
     set_if_none(args, 'ylabel', get_func_name(ret_func))
+    set_if_none(args, 'same_ratio', same_ratio)
     plot_scatter(*non_ser, *res, **args)
 
 showRiskReturn = show_rr # legacy
@@ -784,6 +801,9 @@ def get_risk_return_series(lst, ret_func, risk_func, mode_names, **args):
 #     ylabel=ret_func.__name__
 #     args = set_if_none(args, "show_zero_point", True)
 #     show_scatter(xs, ys, xlabel=xlabel, ylabel=ylabel, **args)
+
+def show_rr_capture_ratios(*all):
+    show_rr(*all, ret_func=get_upside_capture_SPY, risk_func=get_downside_capture_SPY, same_ratio=True, lr_fit=True)
 
 def show_rr_modes(*lst, ret_func=None, risk_func=None, modes=['TR', 'NTR', 'PR'], title=None):
     def get_data(lst, mode):
@@ -985,27 +1005,6 @@ def shift(s, n):
     index = pd.date_range(start, end)
     s = s.reindex(index)
     return s.shift(n)
-
-
-# def bom(s):
-#     idx = s.index.values.astype('datetime64[M]') # convert to monthly representation
-#     idx = np.unique(idx) # remove duplicates
-#     return s[idx].dropna()
-
-# def boy(s):
-#     idx = s.index.values.astype('datetime64[Y]') # convert to monthly representation
-#     idx = np.unique(idx) # remove duplicates
-#     return s[idx].dropna()
-
-# see: http://pandas.pydata.org/pandas-docs/stable/timeseries.html#offset-aliases
-def bow(s): return s.asfreq("W") # TODO: WS freq doesn't exist
-def eow(s): return s.asfreq("W")
-def bom(s): return s.asfreq("MS")
-def eom(s): return s.asfreq("M")
-def boq(s): return s.asfreq("QS")
-def eoq(s): return s.asfreq("Q")
-def boy(s): return s.asfreq("YS")
-def eoy(s): return s.asfreq("Y")
     
 
 
@@ -1751,6 +1750,8 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
         show_rr(*all_with_bases, risk_func=ulcer_pr)
         show_rr(*all_with_bases, risk_func=max_dd_pr)
 
+    show_rr_capture_ratios(*all)
+
     # Yields
     if few:
         html_title("Yields")
@@ -1762,6 +1763,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     show_rr_yield(*all, risk_func=mutual_dd_rolling_pr_SPY)
     show_rr_yield(*all, risk_func=ulcer_pr)
     show_rr_yield(*all, risk_func=max_dd)
+    show_rr(*all, ret_func=cagr, risk_func=get_start_yield, lr_fit=True, same_ratio=True)    
     # show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all)
     show_rr__yield_range__mutual_dd_rolling_pr_SPY(*all)
     show_rr__yield_fees__mutual_dd_rolling_pr_SPY(*all)
@@ -1786,7 +1788,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
 
     # zscores
     html_title("z-scores")
-    display_zscores(*all)
+    display_zscores(all, _cache=[None])
 
     # withdraw flows
     html_title("RR: flows")
@@ -1799,6 +1801,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     show_rr(*all, ret_func=mutual_dd_rolling_pr_TLT, risk_func=mutual_dd_rolling_pr_SPY, same_ratio=True)    
     show_rr2(*all, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=ulcer)
     show_rr2(*all, x_func=[mutual_dd_rolling_pr_SPY, mutual_dd_pr_SPY],  y_func=lrretm_beta_SPY, same_ratio=True)
+    show_rr(*all, ret_func=get_downside_capture_SPY, risk_func=mutual_dd_rolling_pr_SPY, lr_fit=True)
     if detailed:
         show_rr(*all, ret_func=mutual_dd_rolling_pr_SPY_weighted, risk_func=mutual_dd_rolling_pr_SPY_unweighted, same_ratio=True)
     # show_rr(*all,                               risk_func=mutual_dd_pr_SPY, ret_func=ulcer,)
@@ -1809,6 +1812,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     # Income
     html_title("Income")
     if few:
+        show_income_ulcer(*all)
         show_income(*all, smooth=12)
         show_income(*all, smooth=3)
         show_income(*all, smooth=0)
@@ -1891,40 +1895,6 @@ def despike(s, std=8, window=30, shift=10):
 
 
 
-def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True):
-    start = None
-    if is_series(sym):
-        start = sym.index[0]
-    prc = price(sym)
-    if not start is None:
-        prc = prc[start:]
-    units = value / prc[0]
-    div = divs(sym)
-    if not start is None:
-        div = div[start:]
-    income = div * units
-    if net:
-        income *= 0.75
-    if per_month:
-        income = income.resample("M").sum()
-        #income = income[income > 0]
-
-        #interval = get_divs_interval(div)
-        #income = ma(income, interval)
-    else:
-        income = income.resample("Y").sum()/12
-    #income = income.replace(0, np.nan).interpolate()
-#     if per_month:
-#         income /= 12
-    if nis:
-        income = convertSeries(income, "USD", "ILS")
-    if smooth:
-        income = ma(income, smooth)
-    return name(income, prc.name)
-
-def get_cum_income(sym):
-    income = get_income(sym, smooth=0)
-    return income.cumsum()
 
 def adj_inf(s):
     cpi = get(cpiUS)

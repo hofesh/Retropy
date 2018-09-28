@@ -1,3 +1,4 @@
+import numbers
 import functools as ft
 import types
 import sys
@@ -65,3 +66,6 @@ def partial(func, *args, **kwargs):
     partial_func = ft.partial(func, *args, **kwargs)
     ft.update_wrapper(partial_func, func)
     return partial_func
+
+def is_number(v):
+    return isinstance(v, numbers.Real)

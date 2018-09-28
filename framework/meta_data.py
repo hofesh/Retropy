@@ -35,35 +35,32 @@ def _get_meta(s, fld, df, type, defval=0, silent=False):
         return defval
     return val
 
-def get_meta_fee(s):
-    if is_cef(s):
-        return get_meta(s, "expense_ratio")
+def get_etf_cef_meta(s, etf_fld, cef_fld, etf_alt_fld=None, defval=0):
+    ticker = get_ticker_name(s)
     if is_etf(s):
-        fee = get_meta(s, "fees")
-        if pd.isnull(fee):
-            fee = get_meta(s, "mw_fees")
-            if pd.isnull(fee):
-                warn(f"no fee data found for {ticker} in ETF metadata")
-                return 0
-            else:
-                warn(f"only 'mw_fees' but no 'fees' for {ticker} in ETF metadata")
-        return fee
-    warn(f"{get_name(s)} is not an ETF and not a CEF, can't get fee")
-    return 0
-
-def get_etf_cef_meta(s, etf_fld, cef_fld):
+        res = get_meta(s, etf_fld, defval=None, silent=True)
+        if res is None and etf_alt_fld:
+            res = get_meta(s, etf_alt_fld, silent=True)
+            if res is None:
+                warn(f"no {etf_fld} data found for {ticker} in ETF metadata")
+                return defval
+            warn(f"only '{etf_alt_fld}' but no '{etf_fld}' for {ticker} in ETF metadata")
+        return defval if res is None else res
     if is_cef(s):
-        return get_meta(s, cef_fld)
-    if is_etf(s):
-        return get_meta(s, etf_fld)
-    warn(f"{get_name(s)} is not an ETF and not a CEF, can't get {fld}")
+        res = get_meta(s, cef_fld)
+        return defval if res is None else res
+    warn(f"{ticker} is not an ETF and not a CEF, can't get {etf_fld}")
     return 0
 
 def get_cef_meta(s, fld):
     if is_cef(s):
         return get_meta(s, fld)
-    warn(f"{get_name(s)} is not an CEF, can't get {fld}")
+    #warn(f"{get_name(s)} is not an CEF, can't get {fld}")
     return 0
 
+def get_meta_fee(s):
+    return get_etf_cef_meta(s, 'fees', 'expense_ratio', etf_alt_fld='mw_fees')
+
 def get_meta_aum(s):
-    return get_etf_cef_meta(s, "aum", "net_aum")
+    return get_etf_cef_meta(s, "aum", "net_aum", etf_alt_fld="mw_aum")
+

@@ -4,6 +4,7 @@ from framework.symbol import *
 from framework.base import *
 from framework.meta_data import *
 from framework.stats_basic import *
+import Retropy_framework as frm
 
 def divs(symbolName, period=None, fill=False):
     name = get_name(symbolName)
@@ -57,15 +58,15 @@ def get_yield_rolling(sym):
 def get_yield_rolling_no_fees(sym):
     return get_yield(sym, type='rolling', reduce_fees=False)
 
-def get_yield(sym, type=None, drop_special_divs=False, keep_trim=False, reduce_fees=True, altPriceName=None):
+def get_yield(sym, type=None, drop_special_divs=False, keep_trim=False, reduce_fees=True, altPriceName=None, divs_only=False):
     type = type or 'true'
     if type == 'true':
-        return get_yield_helper(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName)
+        return get_yield_helper(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only)
     if type == 'normal':
-        yld_true = get_yield_helper(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName)
+        yld_true = get_yield_helper(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only)
         return mm(yld_true, 5)
     if type == 'rolling':
-        return get_yield_helper(sym, window_months=12, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName)
+        return get_yield_helper(sym, window_months=12, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only)
     raise Exception(f"Invalid yield type {type}")
 
 # for each div, how any months passed from the previous div (the first one gets the same value as the second)
@@ -84,7 +85,7 @@ def rolling_timeframe(d, f, offset):
     res = pd.Series(vals, index)
     return res
 
-def get_yield_helper(symbolName, dists_per_year=None, altPriceName=None, window_months=12, drop_special_divs=False, keep_trim=False, reduce_fees=True):
+def get_yield_helper(symbolName, dists_per_year=None, altPriceName=None, window_months=12, drop_special_divs=False, keep_trim=False, reduce_fees=True, divs_only=False):
     # if isinstance(symbolName, tuple) and dists_per_year is None:
     #     symbolName, dists_per_year = symbolName
     start = None
@@ -143,14 +144,20 @@ def get_yield_helper(symbolName, dists_per_year=None, altPriceName=None, window_
         mult = 12 / window_months # annualizer
         offset = pd.DateOffset(months=window_months-1, days=15)
         divs = rolling_timeframe(divs, lambda x: np.sum(x), offset)
-        yld = divs * mult / price * 100
+        if divs_only:
+            yld = divs * mult
+        else:
+            yld = divs * mult / price * 100
     else:
         divs_intervals = get_divs_intervals(divs)
         mult = 12 / divs_intervals # annualizer
-        yld = divs * mult / price * 100
+        if divs_only:
+            yld = divs * mult
+        else:
+            yld = divs * mult / price * 100
 
     res = name(yld, symbolName).dropna()
-    if reduce_fees and sym_mode != "PR":
+    if reduce_fees and sym_mode != "PR" and not divs_only:
         fees = get_meta_fee(symbolName)
         res -= fees
     return res
@@ -188,11 +195,17 @@ def get_curr_yield_rolling(s, reduce_fees=True):
 def get_curr_yield_rolling_no_fees(s):
     return get_curr_yield(s, type='rolling', reduce_fees=False)
 
-def get_curr_yield(s, type=None, reduce_fees=True):
+def get_curr_yield(s, type=None, reduce_fees=True, live=True):
     type = type or 'rolling'
-    yld = get_yield(s, type=type, reduce_fees=reduce_fees).dropna()
+    yld = get_yield(s, type=type, reduce_fees=reduce_fees, divs_only=live).dropna()
     if yld.shape[0] == 0:
         return 0
+    if live:
+        yld = yld[-1] / pr(s)[-1] * 100
+        if reduce_fees and get(s).name.mode != "PR":
+            fees = get_meta_fee(s)
+            yld -= fees
+        return yld
     return yld[-1]
 
 def get_start_yield(s, type=None, reduce_fees=True):
@@ -210,3 +223,50 @@ def get_TR_from_PR_and_divs(pr, divs):
     mCP = m.cumprod().fillna(method="ffill")
     tr = pr * mCP
     return wrap(tr, pr.name + " TR")
+
+def get_income_median(s):
+    income = get_income(s, smooth=1)
+    income = income[income > 0]
+    income = mm(income, 12)
+    return income
+
+def get_income_ulcer(s):
+    return ulcer_pr(get_income_median(s))
+
+def show_income_ulcer(*all):
+    frm.show(lmap(get_income_median, all), ta=False, log=False, title="Income 12-month median")
+
+def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True):
+    start = None
+    if is_series(sym):
+        start = sym.index[0]
+    prc = price(sym)
+    if not start is None:
+        prc = prc[start:]
+    units = value / prc[0]
+    div = divs(sym)
+    if not start is None:
+        div = div[start:]
+    income = div * units
+    if net:
+        income *= 0.75
+    if per_month:
+        income = income.resample("M").sum()
+        #income = income[income > 0]
+
+        #interval = get_divs_interval(div)
+        #income = ma(income, interval)
+    else:
+        income = income.resample("Y").sum()/12
+    #income = income.replace(0, np.nan).interpolate()
+#     if per_month:
+#         income /= 12
+    if nis:
+        income = convertSeries(income, "USD", "ILS")
+    if smooth:
+        income = ma(income, smooth)
+    return name(income, prc.name)
+
+def get_cum_income(sym):
+    income = get_income(sym, smooth=0)
+    return income.cumsum()

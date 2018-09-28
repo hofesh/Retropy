@@ -19,7 +19,7 @@ class RpySeries(pd.Series):
     def __mul__(self, other):
         if is_number(other):
             return super().__mul__(other)
-        other = framework.base.get(other)
+        # other = framework.base.get(other)
         res = super().__mul__(other)
         res.name = framework.base.get_pretty_name(self) + " * " + framework.base.get_pretty_name(other)
         return rpy(res)
@@ -27,7 +27,7 @@ class RpySeries(pd.Series):
     def __truediv__(self, other):
         if is_number(other):
             return super().__truediv__(other)
-        other = framework.base.get(other)
+        # other = framework.base.get(other)
         res = super().__truediv__(other)
         res.name = framework.base.get_pretty_name(self) + " / " + framework.base.get_pretty_name(other)
         return rpy(res)

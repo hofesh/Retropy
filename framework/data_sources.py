@@ -56,7 +56,7 @@ class DataSource:
             if os.path.isfile(failpath):
                 mtime = datetime.datetime.fromtimestamp(os.path.getmtime(failpath))
                 diff = datetime.datetime.now() - mtime
-                if (conf.cache_fails or gconf.conf_cache_fails) and diff.total_seconds() <= 24 * 3600:
+                if (conf.cache_fails or gconf.conf_cache_fails) and diff.total_seconds() <= 24 * 3600 * 365:
                     raise Exception("Fetching has previously failed for {0}, will try again later".format(symbol))
 
             try:

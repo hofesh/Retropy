@@ -1,3 +1,4 @@
+from datetime import datetime as dt
 import numbers
 import types
 import string
@@ -308,13 +309,16 @@ def parse_portfolio_def(s):
         d = {k: 100/len(d) for k in d.keys()}
     return d
 
-def getNtr(s, getArgs, tax=0.25):
+def getNtr(s, getArgs, tax=0.25, alt_price_symbol=None):
     mode = getArgs["mode"]
     getArgs["mode"] = "PR"
-    pr = get(s, **getArgs)
+    pr = get(alt_price_symbol if not alt_price_symbol is None else s, **getArgs)
     getArgs["mode"] = "divs"
     divs = get(s, **getArgs)
     getArgs["mode"] = mode
+
+    if pr is None:
+        return None
     
     divs = divs * (1-tax)   # strip divs from their taxes
     divs = divs / pr        # get the div to price ratio
@@ -512,8 +516,8 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
                     splitAdj = False
                     divAdj = False
                 s = getFrom(symbol, GetConf(splitAdj, divAdj, cache, cache_fails, mode, source, secondary), error)
-                if s is None: # can happen in error=='ignore'
-                    return None
+        if s is None: # can happen in error=='ignore'
+            return None
 
         s.name = symbol
         if np.any(s != 0):
@@ -592,3 +596,18 @@ def ntr(s):
 def pr(sym):
     return get(sym, mode="PR")
 price = pr
+
+def reget_old_tickers(all=None, source=None, days_old=None):
+    if not source is None:
+        all = get(etfs.all_from_meta, source=source, error='ignore', cache_fails=True)
+    elif not all is None:
+        pass
+    else:
+        raise Exception("all or source must be defined")
+
+    all = [s for s in all if not s is None and s.index[-1].date() <= dt.now().date() - datetime.timedelta(days=days_old)]
+    if len(all) > 0:
+        print(f"re-fetching {len(all)} symbols ..")
+    else:
+        print("All symbols are up-to date")
+    _ = get(lmap(get_ticker_name, all), cache=False, source=source, error='ignore')

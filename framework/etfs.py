@@ -1,3 +1,5 @@
+import framework.meta_data_dfs as dfs
+
 # These are mutually exclusive from the ETFs meta_data set
 bonds_1B_AUM = 'AGG|LQD|BND|TIP|BSV|VCSH|VCIT|PFF|HYG|BIV|JNK|EMB|MBB|CSJ|SHY|BNDX|MINT|BKLN|SHV|IEF|CIU|TLT|IEI|FLOT|PGX|GOVT|PCY|SCHZ|VMBS|VTIP|SJNK|EMLC|TOTL|SHYG|SPSB|FPE|NEAR|SCHP|SPIB|VCLT|BLV|SRLN|SCHO|BOND|TDTT|GVI|IUSB|VRP|VGSH|BIL|FLRN|PGF|VGIT|HYS|CRED|BWX|FTSM|STIP|SPAB|FTSL|HYLS|ISTB|ANGL|SCHR|PHB|BSCK|GSY|BSJI|BSCJ|IPE|STPZ'
 bonds_1B_AUM = bonds_1B_AUM.split('|')
@@ -17,7 +19,16 @@ stocks_10B_AUM = stocks_10B_AUM.split('|')
 stocks_1B_AUM = 'AMLP|XLP|IWN|DXJ|IWO|ACWI|IWP|IWV|VOE|IXUS|EFAV|HEDJ|GDX|IJK|SPLV|XLU|EWZ|VFH|VHT|VBK|SCHD|DBEF|HDV|SCHA|EFV|IJJ|VNQI|VXF|FDN|MTUM|INDA|PRF|VPL|IJS|VOT|SCHG|OEF|IJT|GUNR|XLB|ITA|IDV|KRE|VSS|EWG|AAXJ|HEFA|EEMV|IYR|SCHE|QUAL|GDXJ|FEZ|FVD|IYW|SCHM|EWY|SCHV|XBI|SCHH|VDE|VDC|KBE|RWX|FNDX|ACWV|FXI|EWT|IUSG|AMJ|VIS|NOBL|EFG|MGK|FNDF|EPP|VLUE|IUSV|DON|IEV|ACWX|EWC|SPHD|ICF|RWO|RWR|GSLC|IEUR|VPU|FNDA|MCHI|DGRO|XOP|EWU|FV|ITB|VCR|XLRE|SDOG|RPG|QTEC|VAW|DBEU|EMLP|IGF|EUFN|DLN|DES|DEM|IYH|EWH|IYF|DBJP|QDF|DGRW|HEZU|MGV|MLPI|ROBO|VOOG|PRFZ|IOO|FNDE|SPDW|DLS|RSX|EPI|FLGE|FDL|EWA|SCHC|FXR|GEM|FXL|FNDC|IXJ|IYG|SOXX|CWI|RYT|PDP|XT|VONG|DGS|ONEQ|PWV|IHI|FEX|BOTZ|OIH|ILF|IXN|IXN|FBGX|SKYY|FTEC|MGC|SPHQ|PKW|MOAT|GNR|VONV|DWX|IGM|SMH|JPIN|XMLV|EWL|SLYG|VTWO|DHS|FTXO|KWEB|PXF|TILT|FBT|INDY|IYJ|SPYG|XSLV|FXO|DFE|XHB|REM|HACK|MDYG|FNCL|IYY|HEWJ|IGV|FTA|FIHD|LIT|EWW|VOX|SLYV|IYE|GXC|NANR|XAR|TLTD|KBWB|FXH|IQDF|IQDF|IXC|EWP|EZM'
 stocks_1B_AUM = stocks_1B_AUM.split('|')
 
-all_bonds = bonds_1B_AUM + bonds_100M_AUM + bonds_tax_pref_100M_AUM
-all_bonds_alts = all_bonds + alts_100M_AUM
-all_stocks = stocks_10B_AUM + stocks_1B_AUM
-all = all_stocks + all_bonds_alts
+all_manual_bonds = bonds_1B_AUM + bonds_100M_AUM + bonds_tax_pref_100M_AUM
+all_manual_bonds_alts = all_manual_bonds + alts_100M_AUM
+all_manual_stocks = stocks_10B_AUM + stocks_1B_AUM
+all_manual = all_manual_stocks + all_manual_bonds_alts
+
+if not dfs.etf_metadata_df is None:
+    _df = dfs.etf_metadata_df.query('aum > 100 or mw_aum > 100').sort_values("aum", ascending=False)
+    all = list(_df.index)
+    all_bonds = list(_df.query("yc_category == 'FixedIncome' or yc_category == 'TaxPreferred'").index)
+    all_alts = list(_df.query("yc_category == 'Alternative'").index)
+    all_bonds_alts = all_bonds + all_alts
+    all_stocks = list(_df.query("yc_category == 'Equity'").index)
+

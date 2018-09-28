@@ -5,12 +5,34 @@ from framework.symbol import *
 from framework.stats_basic import *
 from framework.base import *
 
-def lr(y):
-    X = np.arange(y.shape[0])
+# def lr(y):
+#     X = np.arange(y.shape[0])
+#     X = sm.add_constant(X)
+#     model = sm.OLS(y, X).fit()
+#     pred = model.predict(X)
+#     pred = name(pd.Series(pred, y.index), y.name + " fit")
+#     return pred
+    
+def lr(y, X=None, print_r2=False):
+    if X is None:
+        X = np.arange(len(y))
+        if is_series(y):
+            xs = y.index
+        else:
+            xs = X
+        name_ = get_name(y) + " fit"
+    else:
+        xs = X
+        name_ = "fit"
+        
     X = sm.add_constant(X)
     model = sm.OLS(y, X).fit()
+    if print_r2:
+        print(f"R^2: {model.rsquared}")
+
     pred = model.predict(X)
-    pred = name(pd.Series(pred, y.index), y.name + " fit")
+    pred = name(pd.Series(pred, xs), name_)
+    pred = pred.sort_index()
     return pred
     
 def lr_beta(y, X=None, pvalue=False):

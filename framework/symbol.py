@@ -48,7 +48,7 @@ class Symbol(str):
             res = self.fullname
         if hasattr(self, "mode") and self.mode:
             res = f"{res} {self.mode}"
-        if meta.is_cef_ticker(self):
+        if meta.is_cef_ticker(self.ticker):
             res = f"{res}*"
         return res
 
@@ -118,8 +118,14 @@ def get_name(s, use_sym_name=False, nomode=False, nick_or_name=False, ticker=Fal
         return ""
     if is_series(s):
         s = s.name
-    if not is_symbol(s):
+    if is_symbol(s):
+        pass
+    elif isinstance(s, str):
         s = Symbol(s)
+    else:
+        return ''
+    # if not is_symbol(s):
+    #     s = Symbol(s)
     if ticker:
         return s.ticker
     if use_sym_name:

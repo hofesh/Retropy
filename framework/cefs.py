@@ -25,10 +25,10 @@ cef_us_equity = cef_us_equity.split('|')
 cef_non_us_other = 'FAX|IAF|AEF|AGD|FCO|JEQ|AOD|APB|BGIO|BST|BWG|INF|CHW|CGO|CEE|CHN|GLV|GLQ|GLO|DEX|VCF|KMM|KST|EGIF|EEA|FDEU|FEO|FAM|GDL|GGZ|GGT|CUBA|IFN|HEQ|JOF|KF|SCD|LDF|LGI|LOR|MCR|MIN|MMT|APF|CAF|MSF|MSD|EDD|IIF|MXE|MXF|GF|IRL|JDD|JEMD|JGH|RCS|PPT|RGT|EDF|EDI|SWZ|TWN|TDF|EMF|TEI|GIM|ZF|IAE|IHD|IDE|IID|EOD|EMD|EHI'
 cef_non_us_other = cef_non_us_other.split('|')
 
-cef_all = cef_highyield_taxable + cef_municipal_tax_exempt + cef_us_equity + cef_non_us_other
+all = cef_highyield_taxable + cef_municipal_tax_exempt + cef_us_equity + cef_non_us_other
 
 # these have broken/corrupt data in Yahoo
-cefs_bad_yahoo = ['EHT', 'DCF', 'JHY', 'CBH', 'CCD', 'FIV', 'JPT', 'JHD', 'EFL', 'HFRO', 'CBH', 'GGO', 'BST'] # these have broken/corrupt data in Yahoo
+cefs_bad_yahoo = ['EHT', 'DCF', 'JHY', 'CBH', 'CCD', 'FIV', 'JPT', 'JHD', 'EFL', 'HFRO', 'CBH', 'GGO', 'BST', 'JCO', 'FTSM'] # these have broken/corrupt data in Yahoo
 
 cef_nav_map = {
     'ARDC': 'XADCX',
@@ -58,16 +58,20 @@ def get_cef_nav_ticker(s):
         nav = f'X{s}X'
     return nav
 
-def get_cef_nav(s, source="Y"):
+def get_cef_nav(s, source="AV"):
     return get(get_cef_nav_ticker(s), source=source, mode="PR", error='ignore', cache_fails=True)
 
-def get_cef_premium(s, source="Y"):
+def get_cef_premium(s, source="AV"):
     nav = get_cef_nav(s, source=source)
     if nav is None:
         warn(f'Unable to get NAV for {get_pretty_name(s)}')
         return None
     pr = get(s, source=source, mode="PR")
-    return name((pr / nav - 1) * 100, f"{get_name(s)} premium")
+    if pr.index[-1] > nav.index[-1]:
+        warn(f"{get_ticker_name(s)} filling NAV history gap from {nav.index[-1]} to {pr.index[-1]}")
+        nav = nav.reindex(pr.index).fillna(method='ffill')
+    prem = (pr / nav - 1) * 100
+    return name(prem, f"{get_name(s)} premium")
 
 def show_cef_premium(*all):
     frm.show(1, lmap(get_cef_premium, all), ta=False, log=False, title="Premium")
@@ -78,9 +82,19 @@ def show_cef_zscore(*all):
 def show_cef_nav_and_pr(*all):
     frm.show(lmap(get_cef_nav, all), lmap(pr, all), ta=False, title="NAV and Price")
 
+def show_cef_nav_and_ntr(*all):
+    frm.show(lmap(get_cef_nav_ntr, all), lmap(ntr, all), ta=False, title="NAV and market NTR")
+
 def get_cef_curr_premium(s):
+    if not is_cef(s):
+        return 0
     p = get_cef_premium(s)
     if p is None:
+        # warn(f"can't get calculated premium, using meta_data premium instead for {get_ticker_name(s)}")
+        p = get_cef_meta(s, "premium")
+        if not p is None:
+            warn(f"can't get calculated premium, using meta_data premium instead for {get_ticker_name(s)}")
+            return p
         return None
     return p.dropna()[-1]
 
@@ -131,3 +145,16 @@ def get_cef_curr_zscore(s, period=365*3):
 def show_cef_zscore(*all):
     frm.show(-2, -1, 1, 2, lmap(get_cef_zscore, all), ta=False, log=False, title="3y z-score")
 
+def get_cef_nav_ntr(s):
+    if get_cef_nav(s) is None:
+        return None
+    return name(getNtr(s, {"mode": "NTR"}, alt_price_symbol=get_cef_nav_ticker(s)), f"{get_name(s, nomode=True)} NAV NTR")
+
+
+def analyze_cef(s):
+    frm.show(get_cef_premium(s), frm.get_income(s, smooth=1)/10, ta=False)
+    show_cef_premium(s)
+    show_cef_zscore(s)
+    show_cef_nav_and_pr(s)
+    show_cef_nav_and_ntr(s)
+    frm.show_comp(s, 'SPY')
