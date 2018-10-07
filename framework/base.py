@@ -28,6 +28,7 @@ def getCommonDate(data, pos, agg=max, get_fault=False):
     data = flattenLists(data)
     data = [s for s in data if is_series(s)]
     if not data:
+        warn('getCommonDate: no series in data')
         if get_fault:
             return None, None
         else:
@@ -39,6 +40,7 @@ def getCommonDate(data, pos, agg=max, get_fault=False):
     else:
         raise Exception(f"Invalid pos: {pos}")
     if len(dates) == 0:
+        warn('getCommonDate: no dates in data')
         if get_fault:
             return None, None
         else:
@@ -64,7 +66,7 @@ def doAlign(data):
             if base.shape[0] == 0:
                 continue
             if base[0] != 0:
-                s = s / base[0]
+                s = s / base.iloc[0]
         newArr.append(s)
     return newArr
 
@@ -320,6 +322,11 @@ def getNtr(s, getArgs, tax=0.25, alt_price_symbol=None):
     if pr is None:
         return None
     
+    if is_series(s):
+        start = s.index[0]
+        divs = divs[start:]
+        pr = pr[start:]
+
     divs = divs * (1-tax)   # strip divs from their taxes
     divs = divs / pr        # get the div to price ratio
     divs = divs.fillna(0)   # fill gaps with zero
@@ -330,11 +337,11 @@ def getNtr(s, getArgs, tax=0.25, alt_price_symbol=None):
     ntr.name = s.name
     return ntr
 
-def get_intr(s, getArgs):
+def get_intr(s, getArgs, alt_price_symbol=None):
     mode = getArgs.get("mode", None)
     
     getArgs["mode"] = "PR"
-    pr = get(s, **getArgs)
+    pr = get(alt_price_symbol if not alt_price_symbol is None else s, **getArgs)
     
     getArgs["mode"] = "divs"
     dv = get(s, **getArgs)
@@ -344,7 +351,7 @@ def get_intr(s, getArgs):
     if is_series(s):
         start = s.index[0]
         pr = pr[start:]
-        divs = divs[start:]
+        dv = dv[start:]
     
 #     dv = divs(s)
 #     pr = price(s)
@@ -360,18 +367,19 @@ def get_intr(s, getArgs):
 def is_not_corrupt(s):
     if not is_series(s):
         return True
+    if len(s) > 0 and (s.index[-1] - s.index[0]).days/365 > 50:
+        return True
     if np.max(s) / np.min(s) > 1000:
         warn(f"Dropping corrupt series: {get_name(s)}")
         return False
     return True
 
 
+def do_interpolate(s):
+    s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
+    return s.interpolate()
 
-
-
-
-
-def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, untrim=False, remode=True, start=None, end=None, freq=None, rebal=None, silent=False, error='raise', drop_corrupt=True):
+def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, untrim=False, remode=True, start=None, end=None, freq=None, rebal=None, silent=False, error='raise', drop_corrupt=True, drop_zero=True):
     # tmp
     # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
     #     raise Exception("Invalid get() API usage")
@@ -404,6 +412,8 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
     getArgs["rebal"] = rebal
     getArgs["silent"] = silent
     getArgs["error"] = error
+    getArgs["drop_zero"] = drop_zero
+    
 
     if symbol is None:
         return None
@@ -520,8 +530,9 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
             return None
 
         s.name = symbol
-        if np.any(s != 0):
-            s = s[s != 0] # clean up broken yahoo data, etc ..
+        if drop_zero:
+            if np.any(s != 0):
+                s = s[s != 0] # clean up broken yahoo data, etc ..
 
         if mode != "divs" and mode != "raw":        
             if despike:
@@ -605,6 +616,8 @@ def reget_old_tickers(all=None, source=None, days_old=None):
     else:
         raise Exception("all or source must be defined")
 
+    if isinstance(all[0], str):
+        all = get(all, source=source, error='ignore')
     all = [s for s in all if not s is None and s.index[-1].date() <= dt.now().date() - datetime.timedelta(days=days_old)]
     if len(all) > 0:
         print(f"re-fetching {len(all)} symbols ..")

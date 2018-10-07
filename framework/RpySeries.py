@@ -95,6 +95,8 @@ def rename(s, n):
 ########## mutating series ###########
 
 def sync(a, b):
+    a = a.dropna()
+    b = b.dropna()
     idx = a.index.intersection(b.index)
     a = a.reindex(idx)
     b = b.reindex(idx)

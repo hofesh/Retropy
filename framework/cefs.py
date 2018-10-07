@@ -10,6 +10,7 @@ from framework.utils import *
 from framework.base import *
 from framework.meta_data import *
 from framework.stats_basic import *
+from framework.stats import *
 import Retropy_framework as frm
 
 # these lists and categories are based on cefconnect
@@ -59,6 +60,8 @@ def get_cef_nav_ticker(s):
     return nav
 
 def get_cef_nav(s, source="AV"):
+    if s is None:
+        return None
     return get(get_cef_nav_ticker(s), source=source, mode="PR", error='ignore', cache_fails=True)
 
 def get_cef_premium(s, source="AV"):
@@ -80,7 +83,7 @@ def show_cef_zscore(*all):
     frm.show(-2, -1, 1, 2, lmap(show_cef_zscore, all), ta=False, log=False, title="3y z-score")
 
 def show_cef_nav_and_pr(*all):
-    frm.show(lmap(get_cef_nav, all), lmap(pr, all), ta=False, title="NAV and Price")
+    frm.show(0, lmap(get_cef_nav, all), lmap(pr, all), ta=False, title="NAV and Price")
 
 def show_cef_nav_and_ntr(*all):
     frm.show(lmap(get_cef_nav_ntr, all), lmap(ntr, all), ta=False, title="NAV and market NTR")
@@ -105,28 +108,23 @@ def get_cef_start_premium(s):
     return p.dropna()[0]
 
 
-def get_cef_nav_yield_rolling_no_fees(s):
+def get_cef_nav_yield_no_fees(s, type='normal'):
+    return get_cef_nav_yield(s, type=type, reduce_fees=False)
+
+def get_cef_nav_yield(s, type='normal', reduce_fees=True, source="AV"):
     nav = get_cef_nav(s)
     if nav is None:
         return None
-    res = frm.get_yield(s, type='rolling', altPriceName=get_cef_nav_ticker(s)+"@Y", reduce_fees=False)
+    res = frm.get_yield(s, type=type, altPriceName=get_cef_nav_ticker(s)+"@"+source, reduce_fees=reduce_fees)
     name(res, f"{res.name} NAV")
     return res
 
-def get_cef_nav_yield_rolling(s):
-    nav = get_cef_nav(s)
-    if nav is None:
-        return None
-    res = frm.get_yield(s, type='rolling', altPriceName=get_cef_nav_ticker(s)+"@Y", reduce_fees=True)
-    name(res, f"{res.name} NAV")
-    return res
-
-def get_cef_curr_nav_yield_rolling_no_fees(s):
-    res = get_cef_nav_yield_rolling_no_fees(s)
+def get_cef_curr_nav_yield_no_fees(s):
+    res = get_cef_nav_yield_no_fees(s)
     return 0 if res is None or len(res) == 0 else res[-1]
 
-def get_cef_cur_nav_yield_rolling(s):
-    res = get_cef_nav_yield_rolling(s)
+def get_cef_cur_nav_yield(s):
+    res = get_cef_nav_yield(s)
     return 0 if res is None or len(res) == 0 else res[-1]
 
 def get_cef_zscore(s, period=365*3):
@@ -150,11 +148,105 @@ def get_cef_nav_ntr(s):
         return None
     return name(getNtr(s, {"mode": "NTR"}, alt_price_symbol=get_cef_nav_ticker(s)), f"{get_name(s, nomode=True)} NAV NTR")
 
+def get_cef_nav_intr(s):
+    if get_cef_nav(s) is None:
+        return None
+    return name(get_intr(s, {"mode": "NTR"}, alt_price_symbol=get_cef_nav_ticker(s)), f"{get_name(s, nomode=True)} NAV INTR")
 
-def analyze_cef(s):
+
+def analyze_cef(s, base='SPY'):
+    if is_cef(base):
+        base_cef = base
+        base_ntr = ntr(base)
+    else:
+        base_cef = None
+    ntr_s = ntr(s)
     frm.show(get_cef_premium(s), frm.get_income(s, smooth=1)/10, ta=False)
-    show_cef_premium(s)
-    show_cef_zscore(s)
-    show_cef_nav_and_pr(s)
-    show_cef_nav_and_ntr(s)
-    frm.show_comp(s, 'SPY')
+    if not base_cef is None:
+        frm.show(get_cef_premium(base_cef), frm.get_income(base_cef, smooth=1)/10, ta=False)
+    frm.show(0, 5, get_cef_nav_yield(ntr_s, type='true', reduce_fees=False), get_yield_true_no_fees(ntr_s), ta=False, title="NAV and Market net-yield (no fees)")
+    if not base_cef is None:
+        frm.show(0, 5, get_cef_nav_yield(base_ntr, type='true', reduce_fees=False), get_yield_true_no_fees(base_ntr), ta=False, title="NAV and Market net-yield (no fees)")
+    show_cef_premium(s, base_cef)
+    if not base_cef is None:
+        frm.show(1, get_cef_premium(s) - get_cef_premium(base), ta=False, log=False, title="Relative Premium")
+    frm.show(get_cef_premium(s), (ntr(s) / get_cef_nav_ntr(s) - 1)*100, ta=False, title="Effect of premium/discount of NTR returns")
+    show_cef_zscore(s, base_cef)
+    show_cef_nav_and_pr(s, base_cef)
+    show_cef_nav_and_ntr(s, base_cef)
+    frm.show_dd(get_cef_nav(s), get_cef_nav_ntr(s), get_cef_nav(base_cef), get_cef_nav_ntr(base_cef), do_get=False, mode='', title_prefix="NAV / NAV-NTR")
+    frm.show_comp(s, base)
+
+def get_cef_nav_loss_2010(s):
+    if is_cef(s):
+        nav = get_cef_nav(s)
+        if nav is None:
+            return None
+        return -cagr(lr(nav["2010":]))
+    else:
+        return -cagr(lr(get(s, mode="PR", untrim=True)["2010":]))
+    
+def get_cef_nav_loss_2013(s):
+    if is_cef(s):
+        nav = get_cef_nav(s)
+        if nav is None:
+            return None
+        return -cagr(lr(nav["2013":]))
+    else:
+        return -cagr(lr(get(s, mode="PR", untrim=True)["2013":]))
+    
+def get_cef_roc_3y(s):
+    return get_cef_meta(s, "roc_3y")
+
+def get_cef_coverage(s):
+    r = get_cef_meta(s, "coverage")
+    if r is None:
+        return r
+    return r - 100
+
+def get_cef_nav_or_pr(s, untrim):
+    if is_cef(s):
+        nav = get_cef_nav(s)
+        if not nav is None:
+            if not untrim:
+                nav = nav[s.index[0]:]
+            return nav
+    return get(s, mode="PR", untrim=untrim)
+    
+def ulcer_nav(s):
+    return ulcer(get_cef_nav_or_pr(s, untrim=False))
+
+def ulcer_nav_ntr(s):
+    ntr = get_cef_nav_ntr(s)
+    if ntr is None:
+        return None
+    return ulcer(ntr)
+
+def get_cef_section(s):
+    if not is_cef(s):
+        return ''
+    sec = get_cef_meta(s, "sec_sub")
+    if not sec:
+        return '<NA>'
+    return sec.replace(" Bond Funds", "").replace(" Equity Leveraged", "").replace(" Bond", "").replace(" Funds", "").replace("Taxable Municipal", "Municipal").replace("US Government", "US Govt").replace("Emerging Market Income", "EM Income").replace("Global Real Estate, REIT &amp; Real Assets", 'Real Estate')
+
+def get_cef_maxdd_nav_ntr(s):
+    ntr = get_cef_nav_ntr(s)
+    if ntr is None:
+        return None
+    #ntr = drop_outliers(ntr) # this completely messes NRO for example
+    if len(ntr) == 0:
+        return None
+    return max_dd(ntr)
+
+def get_cef_maxdd_nav_ntr_2008(s):
+    nav = get_cef_nav(s)
+    if nav is None or len(nav[:"2007-02"]) == 0:
+        return None
+    return get_cef_maxdd_nav_ntr(get(s, untrim=True)["2007-02":])
+
+def get_sponsor(s):
+    spn = get_cef_meta(s, "sponsor")
+    if not spn:
+        return None
+    return spn.replace("Fund", '').replace("Advisors", '').replace("Management", '').replace("Partners", '').replace("Investment", '').replace("Company", '').replace("Advisers", '').replace("Services", '').replace("Financial", '').replace("Capital", '').replace("Management", '').replace('Incorporated', '')

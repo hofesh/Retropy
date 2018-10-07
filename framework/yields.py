@@ -219,7 +219,7 @@ def get_curr_net_yield(s, type=None):
     return get_curr_yield(s, type=type)*0.75
     
 def get_TR_from_PR_and_divs(pr, divs):
-    m = d / pr + 1
+    m = divs / pr + 1
     mCP = m.cumprod().fillna(method="ffill")
     tr = pr * mCP
     return wrap(tr, pr.name + " TR")
@@ -270,3 +270,12 @@ def get_income(sym, value=100000, nis=False, per_month=True, smooth=12, net=True
 def get_cum_income(sym):
     income = get_income(sym, smooth=0)
     return income.cumsum()
+
+def get_curr_yield_zscore(s):
+    yld = get_yield_true(s)
+    if yld is None:
+        return None
+    zs = zscore_modified(yld)
+    if len(zs) == 0:
+        return None
+    return zs[-1]

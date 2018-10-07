@@ -85,6 +85,8 @@ from framework.stats_basic import *
 from framework.stats import *
 from framework.RpySeries import *
 from framework.asset_classes import *
+from framework.zscores_table import *
+from framework.data_sources_special import *
 import framework.meta_data_dfs as meta_dfs
 import framework.cefs as cefs
 import framework.etfs as etfs
@@ -997,15 +999,6 @@ def roll_ts(s, func, n, dropna=True):
         res = res.dropna()
     return res
 
-def shift(s, n):
-    if len(s) == 0:
-        return s
-    start = s.index[0]+n if n < 0 else s.index[0]
-    end = s.index[-1]+n if n > 0 else s.index[-1]
-    index = pd.date_range(start, end)
-    s = s.reindex(index)
-    return s.shift(n)
-    
 
 
 # In[ ]:
@@ -1045,7 +1038,7 @@ def prep_as_df(target, sources, mode, as_logret=False, as_geom_value=False, freq
 
 import sklearn.metrics
 def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_values=True, 
-          return_res=False, return_ser=True, return_pred=False, res_pred=False, show_res=True, freq=None, obj="sum_sq_log", mode=None):
+          return_res=False, return_ser=True, return_pred=False, return_pred_fit=False, res_pred=False, show_res=True, freq=None, obj="sum_sq_log", mode=None, do_align=True):
     def apply(x, bias):
         res = x[0]*int(bias) + i_logret((sources_logret * x[1:]).sum(axis=1))
         return res
@@ -1082,7 +1075,7 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
     orig_sources = sources
     orig_target = get(target, mode=mode)
 
-    target, sources = prep_as_df(target, sources, mode, as_geom_value=fit_values, freq=freq)
+    target, sources = prep_as_df(target, sources, mode, as_geom_value=fit_values and do_align, freq=freq)
     sources_logret = sources.apply(lambda x: logret(x, dropna=False), axis=0)
     n_sources = sources_logret.shape[1]
     
@@ -1215,11 +1208,16 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
         #sources_dict = {s.name: s for s in sources}
         #d = Portfolio([(s, ser[getName(s)]*100) for s in orig_sources])
         d = (ser*100).to_dict()
-        if True:
-            pred = name(get(d, mode=orig_target.name.mode), orig_target.name.pretty_name + " - fit")
-            pred = pred / pred[_pred.index[0]] * _pred[0]
-            port = dict_to_port_name(d, drop_zero=True, drop_100=True, use_sym_name=True)
-            pred_str = f"{port} = {target.name} - fit"
+        print("orig name: ", orig_target.name)
+        if True and not orig_target.name.startswith("~"):
+            try:
+                pred = name(get(d, mode=get_mode(orig_target.name)), get_pretty_name(orig_target.name) + " - fit")
+                pred = pred / pred[_pred.index[0]] * _pred[0]
+                port = dict_to_port_name(d, drop_zero=True, drop_100=True, use_sym_name=True)
+                pred_str = f"{port} = {target.name} - fit"
+            except:
+                pred_str = '<NA>'
+                warn("failed to get portfolio based on regerssion")
 
         #    pred, _pred = doAlign([pred, _pred])
 
@@ -1230,6 +1228,9 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
     if pos_weights and np.any(ser < -0.001):
         print("lrret WARNING: pos_weights requirement violated!")
     
+    if return_pred_fit:
+        return _pred
+
     if return_pred:
         print(ser)
         return pred_str
@@ -1870,8 +1871,12 @@ def show_dd_price_actions(target, base, min_days=0, min_depth=3, dd_func=dd_roll
 
     print("mutual_dd_risk: ", mutual_dd(target, base, dd_func=dd_func, min_depth=min_depth))
 
-def show_dd(*all, mode="PR", dd_func=dd, legend=True, title_prefix=''):
-    all = get(all, mode=mode)
+def show_dd(*all, mode="PR", dd_func=dd, legend=True, title_prefix='', do_get=True):
+    all = [s for s in all if not s is None]
+    if do_get:
+        all = get(all, mode=mode)
+    for s in all:
+        print(f"ulcer {get_name(s)}: {ulcer(s):.2f}")
     show(lmap(dd_func, all), -10, -20, -30, -40, -50, ta=False, title=f"{title_prefix} {mode} {get_func_name(dd_func)} draw-down", legend=legend)
 
 def _despike(s, std, window, shift):
@@ -2442,11 +2447,11 @@ def join_rel_align_series(all):
 
 def join_rel_align_mean_series_incremental(all, mode):
     sers = mean_series_incremental(all, mode=mode)
-    return join_rel_align_series(sers)
+    return name(join_rel_align_series(sers), "mean")
 
 def join_rel_align_median_series_incremental(all, mode):
     sers = mean_series_incremental(all, mode=mode, mean_func=median_series)
-    return join_rel_align_series(sers)
+    return name(join_rel_align_series(sers), "median")
 
 def show_mean_series_incremental(all, mode="NTR"):
     all_sers = mean_series_incremental(all, mode=mode)

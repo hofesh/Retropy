@@ -1,5 +1,9 @@
 import datetime
 from pathlib import Path
+import requests
+import json
+import re
+from bs4 import BeautifulSoup
 
 import pandas as pd
 

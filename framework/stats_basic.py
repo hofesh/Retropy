@@ -90,6 +90,16 @@ def i_logret(s):
 def percentile(s, p):
     return s.quantile(p/100)   
 
+def shift(s, n):
+    if len(s) == 0:
+        return s
+    start = s.index[0]+n if n < 0 else s.index[0]
+    end = s.index[-1]+n if n > 0 else s.index[-1]
+    index = pd.date_range(start, end)
+    s = s.reindex(index)
+    return s.shift(n)
+    
+
 def past(s, n):
     return shift(s, n)
 
@@ -99,6 +109,8 @@ def future(s, n):
 # https://stackoverflow.com/questions/38878917/how-to-invoke-pandas-rolling-apply-with-parameters-from-multiple-column
 # https://stackoverflow.com/questions/18316211/access-index-in-pandas-series-apply
 def roll_ts(s, func, n, dropna=True):
+    if s.index[0].year < 1970:
+        warn("roll_ts has a bug for dates before 1970-01-01, don't use it") # it will makes all periods after 1970 start with 1970
     # note that rolling auto-converts int to float: https://github.com/pandas-dev/pandas/issues/15599
     # i_ser = pd.Series(range(s.shape[0]))
     # res = i_ser.rolling(n).apply(lambda x: func(pd.Series(s.values[x.astype(int)], s.index[x.astype(int)])))
@@ -109,6 +121,9 @@ def roll_ts(s, func, n, dropna=True):
         res = res.dropna()
     return res
 
+def mcagr_monthly(s, years):
+    return (np.power(s / s.shift(12*years), 1/years)-1)*100
+    
 def mcagr_future(s, years=5):
     return future(mcagr(s, n=365*years), 365*years)
 
@@ -131,6 +146,8 @@ def msharpe(s, n=365, dropna=True):
     return name(mcagr(s, n, dropna) / mstd(s, n, dropna), s.name + " sharpe")
 
 def ulcer(x):
+    if x is None:
+        return np.nan
     cmax = np.maximum.accumulate(x)
     r = (x/cmax-1)*100
     return math.sqrt(np.sum(r*r)/x.shape[0])
@@ -171,3 +188,28 @@ def get_upside_capture_SPY(s):
 
 def get_capture_ratio_SPY(s, b):
     return get_capture_ratio(s, 'SPY')
+
+def reject_outliers(data, m = 2.):
+    data = data[~pd.isnull(data)]
+    data = data.astype(float)
+    if len(data) == 0:
+        return data
+    med = np.nanmedian(data)
+    if pd.isnull(med):
+        return data
+    d = np.abs(data - np.nanmedian(data))
+    mdev = np.nanmedian(d)
+    s = d/mdev if mdev else 0.
+    return data[s<m]
+drop_outliers = reject_outliers
+
+# zscore with mean and std calculated from the source data cleaned from outliers
+def zscore_modified(vals):
+    if any(isinstance(v, str) for v in vals):
+        return np.zeros(len(vals))
+    vals = [np.nan if v is None else v for v in vals] # replace None with np.nan
+    # print(type(vals[0]))
+    # print(vals[:10])
+    vals_no_outliers = reject_outliers(np.array(vals)).flatten()
+    return zmap(vals, vals_no_outliers)
+    

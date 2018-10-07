@@ -10,8 +10,8 @@ def is_etf(s):
 def is_cef(s):
     return get_ticker_name(s) in cef_metadata_df.index
 
-def get_meta(s, fld, defval=0, silent=False):
-    if is_etf(s):
+def get_meta(s, fld, defval=0, silent=False, cef_only=False):
+    if is_etf(s) and not cef_only:
         return _get_meta(s, fld, etf_metadata_df, "ETF", defval=defval, silent=silent)
     if is_cef(s):
         return _get_meta(s, fld, cef_metadata_df, "CEF", defval=defval, silent=silent)
@@ -54,7 +54,7 @@ def get_etf_cef_meta(s, etf_fld, cef_fld, etf_alt_fld=None, defval=0):
 
 def get_cef_meta(s, fld):
     if is_cef(s):
-        return get_meta(s, fld)
+        return get_meta(s, fld, cef_only=True)
     #warn(f"{get_name(s)} is not an CEF, can't get {fld}")
     return 0
 
@@ -64,3 +64,8 @@ def get_meta_fee(s):
 def get_meta_aum(s):
     return get_etf_cef_meta(s, "aum", "net_aum", etf_alt_fld="mw_aum")
 
+def get_meta_yield(s, net=True):
+    yld = get_etf_cef_meta(s, "yc_yield_ttm", "market_yield", etf_alt_fld="mw_yield")
+    if net:
+        yld *= 0.75
+    return yld

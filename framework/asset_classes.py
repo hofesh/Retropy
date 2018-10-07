@@ -149,6 +149,20 @@ if not "fixed_globals_once" in globals():
 
     ta_all = ta_stocks + ta_bonds + ta_corpBonds + ta_makam    
     # ==== TASE END ====
+
+    # Corp bonds Yield indeces
+    # https://www.quandl.com/data/ML-Merrill-Lynch
+
+    ml_cb_aaa = 'ML/AAAEY@Q=cb_aaa'
+    ml_cb_aa = 'ML/AAY@Q=cb_aa'
+    ml_cb_a = 'ML/AEY@Q=cb_a'
+    ml_cb_ALL = 'ML/USEY@Q=cb_ALL'
+    ml_cb_bbb = 'ML/BBBEY@Q=cb_bbb'
+    ml_cb_bb = 'ML/BBY@Q=cb_bb'
+    ml_cb_hy = 'ML/USTRI@Q=cb_hy'
+    ml_cb_ccc = 'ML/CCCY@Q=cb_ccc'
+    ml_em_hg = 'ML/EMHGY@Q=em_hg'
+    ml_em_hy = 'ML/EMHYY@Q=em_hy'
     
     
     

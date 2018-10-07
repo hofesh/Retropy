@@ -6,6 +6,8 @@ from framework.base import *
 dd_item = namedtuple("dd_item", ["start", "end", "depth"])
 
 def dd(x):
+    if x is None:
+        return np.nan
     x = get(x).dropna()
     res = (x / np.maximum.accumulate(x) - 1) * 100
     return res
