@@ -83,6 +83,7 @@ from framework.pca import *
 from framework.meta_data import *
 from framework.stats_basic import *
 from framework.stats import *
+from framework.draw_downs import *
 from framework.RpySeries import *
 from framework.asset_classes import *
 from framework.zscores_table import *
