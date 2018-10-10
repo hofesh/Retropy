@@ -62,6 +62,8 @@ def get_cef_nav_ticker(s):
 def get_cef_nav(s, source="AV"):
     if s is None:
         return None
+    if not is_cef(s):
+        return None
     return get(get_cef_nav_ticker(s), source=source, mode="PR", error='ignore', cache_fails=True)
 
 def get_cef_premium(s, source="AV"):
@@ -137,6 +139,8 @@ def get_cef_zscore(s, period=365*3):
     return name(p_zscore, f"{get_name(s)} zscore")
 
 def get_cef_curr_zscore(s, period=365*3):
+    if not is_cef(s):
+        return None
     res = get_cef_zscore(s, period=period)
     return None if res is None or len(res) == 0 else res[-1]
 
@@ -144,6 +148,8 @@ def show_cef_zscore(*all):
     frm.show(-2, -1, 1, 2, lmap(get_cef_zscore, all), ta=False, log=False, title="3y z-score")
 
 def get_cef_nav_ntr(s):
+    if not is_cef(s):
+        return None
     if get_cef_nav(s) is None:
         return None
     return name(getNtr(s, {"mode": "NTR"}, alt_price_symbol=get_cef_nav_ticker(s)), f"{get_name(s, nomode=True)} NAV NTR")
@@ -217,15 +223,15 @@ def ulcer_nav(s):
     return ulcer(get_cef_nav_or_pr(s, untrim=False))
 
 def ulcer_nav_ntr(s):
+    if not is_cef(s):
+        return None
     ntr = get_cef_nav_ntr(s)
     if ntr is None:
         return None
     return ulcer(ntr)
 
 def get_cef_section(s):
-    if not is_cef(s):
-        return ''
-    sec = get_cef_meta(s, "sec_sub")
+    sec = get_etf_cef_meta(s, 'yc_sub_category', 'sec_sub')
     if not sec:
         return '<NA>'
     return sec.replace(" Bond Funds", "").replace(" Equity Leveraged", "").replace(" Bond", "").replace(" Funds", "").replace("Taxable Municipal", "Municipal").replace("US Government", "US Govt").replace("Emerging Market Income", "EM Income").replace("Global Real Estate, REIT &amp; Real Assets", 'Real Estate')

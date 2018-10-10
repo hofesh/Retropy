@@ -29,6 +29,9 @@ def boy(s): return s.asfreq("YS")
 def eoy(s): return s.asfreq("Y")
 
 
+def last(s): return s[-1]
+def first(s): return s[0]
+
 def ma(s, n):
     n = int(n)
     return wrap(s.rolling(n).mean(), "ma({}, {})".format(s.name, n))

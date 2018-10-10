@@ -86,6 +86,7 @@ from framework.stats import *
 from framework.RpySeries import *
 from framework.asset_classes import *
 from framework.zscores_table import *
+from framework.yields import *
 from framework.data_sources_special import *
 import framework.meta_data_dfs as meta_dfs
 import framework.cefs as cefs
@@ -731,9 +732,10 @@ def show_rr(*lst, ret_func=None, risk_func=None, trim=True, mode_names=False, lr
         xs = [s.index[0] for s in res]
         ys = [s.iloc[0] for s in res]
         fit = lr(ys, xs, print_r2=True)
-        fit = fit.iloc[::len(fit)-1] # keep first and last only
-        fit.name = ''
-        res.insert(0, fit)
+        if len(fit) > 1:
+            fit = fit.iloc[::len(fit)-1] # keep first and last only
+            fit.name = ''
+            res.insert(0, fit)
     if same_ratio:
         xs = [s.index[0] for s in res]
         ys = [s.iloc[0] for s in res]
@@ -1756,6 +1758,12 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     # Yields
     if few:
         html_title("Yields")
+        if has_target:
+            show_yield(target, detailed=True)
+        elif len(all) == 1:
+            show_yield(all[0], detailed=True)
+        if len(all) > 1:
+            show_yield(*all, detailed=False)        
         show_yield_types(*all)
         show_yield_types(*all, drop_special_divs=True)
 
@@ -1909,10 +1917,11 @@ def adj_inf(s):
 from functools import lru_cache
 
 @lru_cache(maxsize=12)
-def get_inflation(smooth=None):
+def get_inflation(smooth=None, interpolate=True):
     cpi = get(cpiUS, interpolate=False)
     inf = (cpi / cpi.shift(12) - 1) * 100
-    inf = inf.asfreq("D").interpolate()
+    if interpolate:
+        inf = inf.asfreq("D").interpolate()
     if smooth:
         inf = ma(inf, smooth)
     return name(inf, "inflation")

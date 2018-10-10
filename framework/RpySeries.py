@@ -102,6 +102,14 @@ def sync(a, b):
     b = b.reindex(idx)
     return a, b
 
+def expand(a, b):
+    a = a.dropna()
+    b = b.dropna()
+    idx = a.index.union(b.index)
+    a = a.reindex(idx)
+    b = b.reindex(idx)
+    return a, b
+
 def trimBy(trimmed, by):
     not_list = False
     if not isinstance(trimmed, list):
@@ -117,11 +125,19 @@ def trimBy(trimmed, by):
         return res[0]
     return res
 
-def align_with(s, w):
-    if s.index[0] in w:
-        return s * w[s.index[0]] / s[0]
-    if w.index[0] in s:
-        return s * w[0] / s[w.index[0]]
+def align_with(s, w, center=False):
+    if center:
+        idx = len(s) // 2
+        if s.index[idx] in w:
+            return s * w[s.index[idx]] / s[idx]
+        idx = len(w) // 2
+        if w.index[idx] in s:
+            return s * w[idx] / s[w.index[idx]]
+    else:        
+        if s.index[0] in w:
+            return s * w[s.index[0]] / s[0]
+        if w.index[0] in s:
+            return s * w[0] / s[w.index[0]]
     raise Exception(f"Cannot align {get_pretty_name(s)} with {get_pretty_name(w)}, no common start date found")
 
 def align(s):

@@ -1,4 +1,5 @@
 import framework.meta_data_dfs as dfs
+import pandas as pd
 
 # These are mutually exclusive from the ETFs meta_data set
 bonds_1B_AUM = 'AGG|LQD|BND|TIP|BSV|VCSH|VCIT|PFF|HYG|BIV|JNK|EMB|MBB|CSJ|SHY|BNDX|MINT|BKLN|SHV|IEF|CIU|TLT|IEI|FLOT|PGX|GOVT|PCY|SCHZ|VMBS|VTIP|SJNK|EMLC|TOTL|SHYG|SPSB|FPE|NEAR|SCHP|SPIB|VCLT|BLV|SRLN|SCHO|BOND|TDTT|GVI|IUSB|VRP|VGSH|BIL|FLRN|PGF|VGIT|HYS|CRED|BWX|FTSM|STIP|SPAB|FTSL|HYLS|ISTB|ANGL|SCHR|PHB|BSCK|GSY|BSJI|BSCJ|IPE|STPZ'
@@ -27,8 +28,17 @@ all_manual = all_manual_stocks + all_manual_bonds_alts
 if not dfs.etf_metadata_df is None:
     _df = dfs.etf_metadata_df.query('aum > 100 or mw_aum > 100').sort_values("aum", ascending=False)
     all = list(_df.index)
-    all_bonds = list(_df.query("yc_category == 'FixedIncome' or yc_category == 'TaxPreferred'").index)
+    all_tax_preferred = list(_df.query("yc_category == 'TaxPreferred'").index)
+    all_bonds = list(_df.query("yc_category == 'FixedIncome'").index)
+    all_bonds_and_tax_preferred = list(_df.query("yc_category == 'FixedIncome' or yc_category == 'TaxPreferred'").index)
     all_alts = list(_df.query("yc_category == 'Alternative'").index)
     all_bonds_alts = all_bonds + all_alts
     all_stocks = list(_df.query("yc_category == 'Equity'").index)
+    all_no_category = list(_df[pd.isnull(_df["yc_category"])].index)
+    all_no_aum = list(dfs.etf_metadata_df[(pd.isnull(dfs.etf_metadata_df["aum"])) & (pd.isnull(dfs.etf_metadata_df["mw_aum"]))].index)
+#    all_no_aum = list(dfs.etf_metadata_df[(pd.isnull(dfs.etf_metadata_df["aum"]))].index)
+    all_no_aum = [s for s in all_no_aum if not ':' in s]
+
+    all_govt_long = list(_df.query("yc_sub_category == 'LongGovernment'").index)
+    all_ultra_short = list(_df.query("yc_sub_category == 'UltrashortBond'").index)
 

@@ -35,6 +35,13 @@ class Symbol(str):
         else:
             self.source = ""
 
+        parts = self.ticker.split("^")
+        if len(parts) == 2 and not self.ticker.startswith("^"):
+            self.ticker = parts[0]
+            self.field = parts[1]
+        else:
+            self.field = ''
+
         self.diskname = self.ticker
         if self.source:
             self.diskname += "@" + self.source
@@ -46,7 +53,7 @@ class Symbol(str):
             #return f"{self.fullname_nonick} = {self.nick}"
         else:
             res = self.fullname
-        if hasattr(self, "mode") and self.mode:
+        if hasattr(self, "mode") and self.mode and not self.mode in res:
             res = f"{res} {self.mode}"
         if meta.is_cef_ticker(self.ticker):
             res = f"{res}*"

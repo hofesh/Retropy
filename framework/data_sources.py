@@ -224,6 +224,11 @@ class QuandlDataSource(DataSource):
         return quandl.get(symbol.name)
 
     def process(self, symbol, df, conf):
+        if symbol.field:
+            if not symbol.field in df.columns:
+                warn(f"field {symbol.field} not found in {symbol} raw DataFrame")
+                return None
+            return df[symbol.field]
         if conf.mode == "TR" or conf.mode == "PR":
             if "Close" in df.columns:
                 return df["Close"]

@@ -58,15 +58,15 @@ def get_yield_rolling(sym):
 def get_yield_rolling_no_fees(sym):
     return get_yield(sym, type='rolling', reduce_fees=False)
 
-def get_yield(sym, type=None, drop_special_divs=False, keep_trim=False, reduce_fees=True, altPriceName=None, divs_only=False):
+def get_yield(sym, type=None, drop_special_divs=False, keep_trim=False, reduce_fees=True, altPriceName=None, divs_only=False, do_resample=True):
     type = type or 'true'
     if type == 'true':
-        return get_yield_helper(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only)
+        return get_yield_helper(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only, do_resample=do_resample)
     if type == 'normal':
-        yld_true = get_yield_helper(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only)
+        yld_true = get_yield_helper(sym, window_months=1, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only, do_resample=do_resample)
         return mm(yld_true, 5)
     if type == 'rolling':
-        return get_yield_helper(sym, window_months=12, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only)
+        return get_yield_helper(sym, window_months=12, drop_special_divs=drop_special_divs, keep_trim=keep_trim, reduce_fees=reduce_fees, altPriceName=altPriceName, divs_only=divs_only, do_resample=do_resample)
     raise Exception(f"Invalid yield type {type}")
 
 # for each div, how any months passed from the previous div (the first one gets the same value as the second)
@@ -85,7 +85,7 @@ def rolling_timeframe(d, f, offset):
     res = pd.Series(vals, index)
     return res
 
-def get_yield_helper(symbolName, dists_per_year=None, altPriceName=None, window_months=12, drop_special_divs=False, keep_trim=False, reduce_fees=True, divs_only=False):
+def get_yield_helper(symbolName, dists_per_year=None, altPriceName=None, window_months=12, drop_special_divs=False, keep_trim=False, reduce_fees=True, divs_only=False, do_resample=True):
     # if isinstance(symbolName, tuple) and dists_per_year is None:
     #     symbolName, dists_per_year = symbolName
     start = None
@@ -130,10 +130,14 @@ def get_yield_helper(symbolName, dists_per_year=None, altPriceName=None, window_
     # NOTE: this causes a falw in the yield calculation
     # the actual dividends are usually mid-month, while the resample changes the dates to end of month
     # and thus later we divide by price at end of month, and not at the dividend date
-    divs = divs.resample("M").sum()
+    if do_resample:
+        divs = divs.resample("M").sum()
+        price = price.resample("M").mean()
     divs = divs[divs>0]
+    
 
     divs, price = sync(divs, price)
+    
 
     if len(divs) == 1 and window_months == 1: # we can't get_divs_intervals
         return divs[0:0]
@@ -151,6 +155,8 @@ def get_yield_helper(symbolName, dists_per_year=None, altPriceName=None, window_
     else:
         divs_intervals = get_divs_intervals(divs)
         mult = 12 / divs_intervals # annualizer
+        _, mult = expand(divs, mult)
+        mult = mult.fillna(method='bfill')
         if divs_only:
             yld = divs * mult
         else:
@@ -279,3 +285,41 @@ def get_curr_yield_zscore(s):
     if len(zs) == 0:
         return None
     return zs[-1]
+
+def get_yield_live(s, type=None, reduce_fees=True, live=True, type_name=False):
+    type = type or 'rolling'
+    yld = get_yield(s, type=type, reduce_fees=reduce_fees, divs_only=live, do_resample=False).dropna()
+    if yld.shape[0] == 0:
+        return 0
+    prc = pr(s)
+    yld = yld.reindex(prc.index)
+    yld = yld.fillna(method='ffill')
+    yld = yld / prc * 100
+    if reduce_fees and get(s).name.mode != "PR":
+        fees = get_meta_fee(s)
+        yld -= fees
+    if type_name:
+        yld = name(yld, f"{get_name(s)} {type}")
+    return yld.dropna()
+
+def get_yield_live_all(s, reduce_fees=True):
+    res = [get_yield_live(s, type='rolling', type_name=True, reduce_fees=reduce_fees), 
+           get_yield_live(s, type='normal', type_name=True, reduce_fees=reduce_fees), 
+           get_yield_live(s, type='true', type_name=True, reduce_fees=reduce_fees)]
+    return res
+
+def show_yield(*all, reduce_fees=False, detailed=True):
+    ylds = lmap(partial(get_yield_live_all, reduce_fees=reduce_fees), all)
+    ylds = flattenLists(ylds)
+    title = f"{get_mode(all[0])} Yields {'with fees' if reduce_fees else 'no fees'}"
+    if detailed and len(all) == 1:
+        s = all[0]
+        dist = divs(s)
+        dist = align_with(dist, ylds[0])
+        prc = price(s)
+        prc = align_with(prc, ylds[0])
+        extra = [dist, prc]
+        title=get_pretty_name_no_mode(s) + " " + title
+    else:
+        extra = []
+    frm.show(0, *extra, ylds, lmap(last, ylds[2::3]), ta=False, log=False, title=title, sort=False)
