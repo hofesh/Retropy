@@ -216,3 +216,26 @@ def zscore_modified(vals):
     vals_no_outliers = reject_outliers(np.array(vals)).flatten()
     return zmap(vals, vals_no_outliers)
     
+
+# std of monthly returns
+def stdmret(s):
+    return ret(s).std()*math.sqrt(12)*100
+
+def pr_beta(s):
+    return lr_beta(price(s))
+
+def pr_cagr(s):
+    return cagr(price(s))
+
+def pr_lr_cagr(s):
+    x = lr(price(s))
+    x = x[x>0] # we won't be able to calc cagr for negative values
+    return cagr(x)
+
+def pr_cagr_full(s):
+    return cagr(get(s, untrim=True, mode="PR"))
+
+def lrretm_beta_SPY(s):
+    return lrret_beta(s, 'SPY', freq="M")
+
+
