@@ -367,6 +367,8 @@ def get_intr(s, getArgs, alt_price_symbol=None):
 def is_not_corrupt(s):
     if not is_series(s):
         return True
+    if " flow" in s.name:
+        return True
     if len(s) > 0 and (s.index[-1] - s.index[0]).days/365 > 50:
         return True
     if np.max(s) / np.min(s) > 1000:
@@ -413,6 +415,7 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
     getArgs["silent"] = silent
     getArgs["error"] = error
     getArgs["drop_zero"] = drop_zero
+    getArgs["drop_corrupt"] = drop_corrupt
     
 
     if symbol is None:

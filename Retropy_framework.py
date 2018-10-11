@@ -517,7 +517,7 @@ def do_sort(data):
     sers = sorted(sers, key=lambda x: x.index[0])
     return sers + non_sers
 
-def show(*data, trim=True, trim_end=True, align=True, align_base=None, ta=True, cache=None, mode=None, source=None, remode=None, untrim=None, silent=False, sort=True, **plotArgs):
+def show(*data, trim=True, trim_end=True, align=True, align_base=None, ta=True, cache=None, mode=None, source=None, remode=None, untrim=None, silent=False, sort=True, drop_corrupt=False, **plotArgs):
     getArgs = {}
     if not mode is None:
         getArgs["mode"] = mode
@@ -529,6 +529,8 @@ def show(*data, trim=True, trim_end=True, align=True, align_base=None, ta=True, 
         getArgs["remode"] = remode
     if not untrim is None:
         getArgs["untrim"] = untrim
+    if not drop_corrupt is None:
+        getArgs["drop_corrupt"] = drop_corrupt
     
     data = flattenLists(data)
     items = []
@@ -892,15 +894,22 @@ def show_rr_yield_tr_ntr(*lst, title="Risk - 12m Yield TR-NTR"):
     show_rr_modes(*lst, ret_func=get_curr_yield_rolling, modes=['TR', 'NTR'], title=title)
 
 
-def show_min_max_bands(symbol, n=365, showSymbol=False):
+def show_min_max_bands(symbol, n=365, show_symbol=True, ma_=False, elr_fit=True, rlr_fit=True, lr_fit=False, log=True):
+    n = int(n)
     x = get(symbol)
-    a = mmax(x, n)
-    b = mmin(x, n)
-    c = mm(x, n)
-    if showSymbol:
-        show(c, a, b, x, ta=False)
-    else:
-        show(c, a, b, ta=False)
+    if log:
+        x = np.log(x)
+    a = name(mmax(x, n), 'max')
+    b = name(mmin(x, n), 'min')
+    c = name(mm(x, n), 'median')
+    if not show_symbol:
+        x = None
+    _ma = ma(x, n) if ma_ else None
+    _lr = lr(x) if lr_fit else None
+    _elr = lr_expanding(x, freq="W") if elr_fit else None
+    _rlr = lr_rolling(x, n // 7, freq="W") if rlr_fit else None
+    show(c, a, b, x, _ma, _lr, _elr, _rlr, ta=False, sort=False, log=not log)
+
         
 
 def show_rolling_beta(target, sources, window=None, rsq=True, betaSum=False, pvalue=False, freq=None, extra=None):
@@ -1210,7 +1219,6 @@ def lrret(target, sources, pos_weights=True, sum_max1=True, sum1=True, fit_value
         #sources_dict = {s.name: s for s in sources}
         #d = Portfolio([(s, ser[getName(s)]*100) for s in orig_sources])
         d = (ser*100).to_dict()
-        print("orig name: ", orig_target.name)
         if True and not orig_target.name.startswith("~"):
             try:
                 pred = name(get(d, mode=get_mode(orig_target.name)), get_pretty_name(orig_target.name) + " - fit")
@@ -1539,6 +1547,12 @@ s = """
 div.rendered_html {
     max-width: 10000px;
 }
+#nbextension-scratchpad {
+    width: 80%;
+}
+.container {
+    width: 95%;
+}
 </style>
 """
 display(HTML(s))
@@ -1695,6 +1709,9 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     if any(map(lambda x:isinstance(x, list), all)):
         raise Exception("analyze_assets individual argument cannot be lists")
 
+    if len(all) == 1 and target is None and base is None:
+        target = all[0]
+        all = []
     has_target_and_base = not target is None and not base is None
     has_target = not target is None
     has_base = not base is None
@@ -1717,7 +1734,11 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
         show_modes(*all)
         if detailed:
             show(lmap(adj_inf, lmap(price, all)), 1, title="real price")
+    if has_target:
+        show_min_max_bands(target)
     if has_target_and_base:
+        r = (target / base).dropna()
+        show_min_max_bands(r)
         show_modes_comp(target, base)
         show_port_flow_comp(target, base)
 
@@ -1754,6 +1775,10 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
         show_rr(*all_with_bases, risk_func=max_dd_pr)
 
     show_rr_capture_ratios(*all)
+
+    if few:
+        html_title("AUM")
+        show_aum(*all)
 
     # Yields
     if few:
@@ -1879,13 +1904,13 @@ def show_dd_price_actions(target, base, min_days=0, min_depth=3, dd_func=dd_roll
 
     print("mutual_dd_risk: ", mutual_dd(target, base, dd_func=dd_func, min_depth=min_depth))
 
-def show_dd(*all, mode="PR", dd_func=dd, legend=True, title_prefix='', do_get=True):
+def show_dd(*all, mode="PR", dd_func=dd, legend=True, title_prefix='', do_get=True, **args):
     all = [s for s in all if not s is None]
     if do_get:
         all = get(all, mode=mode)
     for s in all:
         print(f"ulcer {get_name(s)}: {ulcer(s):.2f}")
-    show(lmap(dd_func, all), -10, -20, -30, -40, -50, ta=False, title=f"{title_prefix} {mode} {get_func_name(dd_func)} draw-down", legend=legend)
+    show(lmap(dd_func, all), -10, -20, -30, -40, -50, ta=False, title=f"{title_prefix} {mode} {get_func_name(dd_func)} draw-down", legend=legend, **args)
 
 def _despike(s, std, window, shift):
     if isinstance(s, list):
@@ -2450,6 +2475,7 @@ def join_rel_align_series(all):
     all = all[1:]
     for s in all:
         s = align_with(s, res)
+        res, _ = expand(res, s)
         res[s.index[0]:] = np.nan
         res[s.index[0]:s.index[-1]] = s
     return rpy(res).sname("~joined").dropna()
@@ -2468,7 +2494,13 @@ def show_mean_series_incremental(all, mode="NTR"):
     show(align_rel(all_sers, base=all_joined), all_joined, ta=False, sort=False)
 #############################
     
+def show_aum(*all, log=False):
+    show(lmap(aum_flow, all), ta=False, log=log, title="AUM flow")
 
+def show_aum_vs_return(s):
+    flow = aum_flow(s)
+    s = s/s[0]-1
+    show(s*max(flow)/s[-1], flow, ta=False, sort=False, title='AUM vs return')
 
 #############################
 from framework.cefs import *

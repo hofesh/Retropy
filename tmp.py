@@ -1,4 +1,4 @@
 from Retropy_framework import *
 from framework.cefs import *
 
-reget_old_tickers([get_cef_nav_ticker('BGIO')], days_old=1)
+join_rel_align_series([do_interpolate(shiller_snp500()), get('SPY')])

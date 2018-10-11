@@ -3,7 +3,12 @@ import numbers
 
 from framework.utils import *
 import framework.base
+#import framework.symbol
 
+def _get_pretty_name(s):
+    if type(s.name).__name__ == "Symbol":
+        return s.name.pretty_name
+    return s.name
 
 class RpySeries(pd.Series):
     def __hash__(self):
@@ -21,7 +26,11 @@ class RpySeries(pd.Series):
             return super().__mul__(other)
         # other = framework.base.get(other)
         res = super().__mul__(other)
-        res.name = framework.base.get_pretty_name(self) + " * " + framework.base.get_pretty_name(other)
+#        res.name = symb.get_pretty_name(self) + " * " + symb.get_pretty_name(other)
+        if other.name is None:
+            res.name = _get_pretty_name(self)
+        else:
+            res.name = _get_pretty_name(self) + " * " + _get_pretty_name(other)
         return rpy(res)
 
     def __truediv__(self, other):
@@ -29,7 +38,8 @@ class RpySeries(pd.Series):
             return super().__truediv__(other)
         # other = framework.base.get(other)
         res = super().__truediv__(other)
-        res.name = framework.base.get_pretty_name(self) + " / " + framework.base.get_pretty_name(other)
+        #res.name = symb.get_pretty_name(self) + " / " + symb.get_pretty_name(other)
+        res.name = _get_pretty_name(self) + " / " + _get_pretty_name(other)
         return rpy(res)
 
 # def sdiv(a, b):
@@ -138,7 +148,8 @@ def align_with(s, w, center=False):
             return s * w[s.index[0]] / s[0]
         if w.index[0] in s:
             return s * w[0] / s[w.index[0]]
-    raise Exception(f"Cannot align {get_pretty_name(s)} with {get_pretty_name(w)}, no common start date found")
+    raise Exception(f"Cannot align {_get_pretty_name(s)} with {_get_pretty_name(w)}, no common start date found")
+    #raise Exception(f"Cannot align {symb.get_pretty_name(s)} with {symb.get_pretty_name(w)}, no common start date found")
 
 def align(s):
     return s / s[0]

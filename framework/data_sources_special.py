@@ -24,3 +24,15 @@ def us_recession_dates():
     r = get('FRED/JHDUSRGDPBR@Q', interpolate=False, drop_zero=False)
     return diff_dates(r)
 
+def aum_flow(s):
+    ticker = get_ticker_name(s)
+    ff = get(ticker, source="FF", mode="PR", interpolate=False, error='ignore')
+    if ff is None:
+        warn(f"no AUM flow for {get_name(s)}")
+        return None
+    ff = ff.cumsum()
+    aum = get_meta_aum(s)
+    if aum:
+        print(f"{get_ticker_name(s)}: {aum:,.0f} M$")
+#        ff += aum - ff[-1]
+    return name(ff, f"{ticker} flow")

@@ -745,6 +745,39 @@ class TASEDataSource(DataSource):
     def process(self, symbol, df, conf):
         return df["price"]
 
+class FundFlowDataSource(DataSource):
+    def fetch(self, symbol, conf):
+        url = "https://www.etf.com/etf-chart/ajax/fundflows/__sym__/1993-01-01/2020-10-11/__sym__%20Daily%20Fund%20Flows/Net%20Flows/%24USD%2Cmm/yes"
+        url = url.replace("__sym__", symbol.ticker)
+            
+        headers = {
+            'Origin': 'https://www.etf.com',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.9,he;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Referer': 'https://www.etf.com/etfanalytics/etf-fund-flows-tool',
+            'Authority': 'www.etf.com',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Connection': 'keep-alive'    
+        }                
+        r = requests.get(url, headers=headers)        
+        text = r.text
+        js = json.loads(text)
+        data = js[1]['output']
+        data = data.split('data:')[1].strip()
+        data = data.split('\n')[0]
+        data = json.loads(data)
+        df = pd.DataFrame(data)
+        df.columns = ["date", "flow"]
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+        return df
+
+    def process(self, symbol, df, conf):
+        return df["flow"]
+
 data_sources = {
     "TASE": TASEDataSource("TASE"),
     "B": BloombergDataSource("B"),
@@ -756,5 +789,6 @@ data_sources = {
     "CC": CryptoCompareDataSource("CC"),
     "CCAV": AlphaVantageCryptoDataSource("CCAV"),
     "CUR": ForexDataSource("CUR"),
-    "G": GoogleDataSource("G")
+    "G": GoogleDataSource("G"),
+    "FF":FundFlowDataSource("FF")
                }

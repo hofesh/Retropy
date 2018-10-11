@@ -64,3 +64,27 @@ def lrret_beta(y, X, freq=None, pvalue=False):
     X = logret(X)
     y, X = sync(y, X)
     return lr_beta(y, X, pvalue=pvalue)
+
+def lr_expanding(s, freq="W"):
+    def last_lr(x):
+        if len(x) == 0:
+            return None
+        x = lr(x)
+        if len(x) == 0:
+            return None
+        return x.iloc[-1]
+    df = pd.DataFrame(s)
+    elr = df.asfreq(freq).expanding().apply(last_lr)
+    return name(elr.iloc[:, 0], f"{get_name(s)} elr")
+
+def lr_rolling(s, n=52, freq="W"):
+    def last_lr(x):
+        if len(x) == 0:
+            return None
+        x = lr(x)
+        if len(x) == 0:
+            return None
+        return x.iloc[-1]
+    df = pd.DataFrame(s)
+    elr = df.asfreq(freq).rolling(n).apply(last_lr)
+    return name(elr.iloc[:, 0], f"{get_name(s)} rlr")
