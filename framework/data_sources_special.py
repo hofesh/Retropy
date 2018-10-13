@@ -24,9 +24,9 @@ def us_recession_dates():
     r = get('FRED/JHDUSRGDPBR@Q', interpolate=False, drop_zero=False)
     return diff_dates(r)
 
-def aum_flow(s):
+def aum_flow(s, cache=True):
     ticker = get_ticker_name(s)
-    ff = get(ticker, source="FF", mode="PR", interpolate=False, error='ignore')
+    ff = get(ticker, source="FF", mode="PR", interpolate=False, error='ignore', cache=cache)
     if ff is None:
         warn(f"no AUM flow for {get_name(s)}")
         return None

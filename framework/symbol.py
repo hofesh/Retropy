@@ -13,7 +13,7 @@ class Symbol(str):
         self.fullname = fullname
 
         parts = fullname.split("=")
-        if len(parts) == 2:
+        if len(parts) >= 2:
             fullname = parts[0].strip()
             self.nick = parts[1].strip()
         else:
@@ -40,7 +40,7 @@ class Symbol(str):
             self.ticker = parts[0]
             self.field = parts[1]
         else:
-            self.field = ''
+            self.field = None
 
         self.diskname = self.ticker
         if self.source:
@@ -99,6 +99,7 @@ def toSymbol(sym, source, mode, rebal):
         res = Symbol(sym.fullname)
         res.mode = mode or sym.mode
         res.rebal = rebal or sym.rebal
+        res.source = source or sym.source
         return res
     if isinstance(sym, str):
         if source is None:
@@ -107,6 +108,7 @@ def toSymbol(sym, source, mode, rebal):
             res = Symbol(sym + "@" + source)
         res.mode = mode
         res.rebal = rebal
+        res.source = source or res.source
         return res
     assert False, "invalid type for Symbol: " + str(type(sym)) + ", " + str(sym)
 

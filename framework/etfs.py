@@ -28,12 +28,15 @@ all_manual = all_manual_stocks + all_manual_bonds_alts
 if not dfs.etf_metadata_df is None:
     _df = dfs.etf_metadata_df.query('aum > 100 or mw_aum > 100').sort_values("aum", ascending=False)
     all = list(_df.index)
-    all_tax_preferred = list(_df.query("yc_category == 'TaxPreferred'").index)
+    
     all_bonds = list(_df.query("yc_category == 'FixedIncome'").index)
-    all_bonds_and_tax_preferred = list(_df.query("yc_category == 'FixedIncome' or yc_category == 'TaxPreferred'").index)
-    all_alts = list(_df.query("yc_category == 'Alternative'").index)
-    all_bonds_alts = all_bonds + all_alts
     all_stocks = list(_df.query("yc_category == 'Equity'").index)
+    all_alts = list(_df.query("yc_category == 'Alternative'").index)
+    all_tax_preferred = list(_df.query("yc_category == 'TaxPreferred'").index)
+
+    all_bonds_and_tax_preferred = all_bonds + all_tax_preferred
+    all_bonds_alts = all_bonds + all_alts
+
     all_no_category = list(_df[pd.isnull(_df["yc_category"])].index)
     all_no_aum = list(dfs.etf_metadata_df[(pd.isnull(dfs.etf_metadata_df["aum"])) & (pd.isnull(dfs.etf_metadata_df["mw_aum"]))].index)
 #    all_no_aum = list(dfs.etf_metadata_df[(pd.isnull(dfs.etf_metadata_df["aum"]))].index)
@@ -41,4 +44,7 @@ if not dfs.etf_metadata_df is None:
 
     all_govt_long = list(_df.query("yc_sub_category == 'LongGovernment'").index)
     all_ultra_short = list(_df.query("yc_sub_category == 'UltrashortBond'").index)
+
+pimco_etf = 'MINT|BOND|HYS|STPZ|CORP|MFEM|MUNI|LTPZ|LDUR|ZROZ|TUZ|MFUS|SMMU|TIPZ|MFDX'
+pimco_etf = pimco_etf.split('|')
 

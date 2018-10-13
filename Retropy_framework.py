@@ -90,6 +90,7 @@ from framework.zscores_table import *
 from framework.yields import *
 from framework.data_sources_special import *
 import framework.meta_data_dfs as meta_dfs
+import framework.conf as conf
 import framework.cefs as cefs
 import framework.etfs as etfs
 import framework.etfs_high_yield as etfs_high_yield
@@ -1777,6 +1778,9 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
 
     show_rr_capture_ratios(*all)
 
+    if has_target_and_base:
+        show_rr(mix(target, base))
+
     if few:
         html_title("AUM")
         show_aum(*all)
@@ -1933,7 +1937,7 @@ def despike(s, std=8, window=30, shift=10):
 
 
 
-
+##########################################
 
 def adj_inf(s):
     cpi = get(cpiUS)
@@ -1951,6 +1955,57 @@ def get_inflation(smooth=None, interpolate=True):
     if smooth:
         inf = ma(inf, smooth)
     return name(inf, "inflation")
+
+def _inf(s):
+    inf = 100 * ret(s, 12).dropna().resample("M").sum()
+    return name(inf, f"inf_{s.name}")
+
+def _get_cpi(type, core, alt):
+    if type == "cpi":
+        if core:
+             return get('FRED/CPILFESL@Q = cpiu_core', interpolate=False)
+        if alt == 0:
+            return get('RATEINF/CPI_USA@Q', interpolate=False)
+        return get('FRED/CPIAUCSL@Q = cpiu', interpolate=False)
+    if type == "pce":
+        if core:
+            return get('FRED/PCEPILFE@Q = pce_core', interpolate=False)
+        else:
+            return get('FRED/PCEPI@Q = pce', interpolate=False)
+        #get('FRED/PCE@Q', interpolate=False)
+    raise Exception(f"unknown cpi type: {type}")
+    
+def get_cpi(type='cpi', core=True, alt=0):
+    return name(_get_cpi(type, core, alt), f"CPI-{type} {'core' if core else 'all'} {alt if alt else ''}")
+    
+def _get_inf(type, core, alt):
+    if type == "cpi":
+        if core:
+            return _inf(get_cpi('cpi', core=True))
+        else:
+            if alt == 0:
+                return get('RATEINF/INFLATION_USA@Q = inf_us', interpolate=False) # 1914+
+            if alt == 1:
+                return _inf(get_cpi('cpi', core, alt=0)) # same, calculated from CPI
+            if alt == 2:
+                return get('FRBC/USINFL^2@Q = inf_all_cpiu', interpolate=False).resample("M").sum() # same, less history
+    elif type == "pce":
+        if not core and alt == 1:
+            return get('FRBC/USINFL^18@Q = inf_pce', interpolate=False).resample("M").sum() # the col name is wrong, this is the full, not core, index
+        return _inf(get_cpi('pce', core=core))
+    elif type == "ppi":
+        if core:
+            return get('FRBC/USINFL^14@Q = inf_ppi_core', interpolate=False).resample("M").sum()
+        else:
+            return get('FRBC/USINFL^10@Q = inf_ppi', interpolate=False).resample("M").sum()
+    elif type == "mean":
+        return mean_series([get_inf('cpi', core), get_inf('pce', core), get_inf('ppi', core)], align=False)
+    raise Exception(f"unknown inf type: {type}")
+
+def get_inf(type='mean', core=True, alt=0):
+    return name(_get_inf(type, core, alt), f"Inflation-{type} {'core' if core else 'all'} {alt if alt else ''}")
+
+##########################################
 
 def get_real_yield(s, type=None):
     yld = get_yield(s, type=type)
@@ -2495,13 +2550,22 @@ def show_mean_series_incremental(all, mode="NTR"):
     show(align_rel(all_sers, base=all_joined), all_joined, ta=False, sort=False)
 #############################
     
-def show_aum(*all, log=False):
-    show(lmap(aum_flow, all), ta=False, log=log, title="AUM flow")
+def show_aum(*all, extra=None, log=False, cache=True):
+    show(lmap(partial(aum_flow, cache=cache), all), extra, ta=False, log=log, title="AUM flow")
 
-def show_aum_vs_return(s):
-    flow = aum_flow(s)
-    s = s/s[0]-1
-    show(s*max(flow)/s[-1], flow, ta=False, sort=False, title='AUM vs return')
+# def show_aum_vs_return(s, cache=True):
+#     flow = aum_flow(s, cache=cache)
+#     s = pr(s)
+#     s = s/s[0]-1
+#     show(s*max(flow)/max(s), flow, ta=False, sort=False, title='AUM vs return')
+
+def show_aum_vs_return(s, cache=True):
+    flow = aum_flow(s, cache=cache)
+    s = pr(s)
+    s = s/s[0]
+    rng = max(s) - min(s)
+    flow = (flow - min(flow))/(max(flow)-min(flow))*rng+min(s)
+    show(1, name(flow/s, "flow/price"), s, flow, ta=False, sort=False, title='AUM vs return')
 
 #############################
 from framework.cefs import *

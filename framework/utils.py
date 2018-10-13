@@ -69,3 +69,9 @@ def partial(func, *args, **kwargs):
 
 def is_number(v):
     return isinstance(v, numbers.Real)
+
+def as_int(s):
+    try:
+        return int(s)
+    except:
+        return None

@@ -42,6 +42,13 @@ class RpySeries(pd.Series):
         res.name = _get_pretty_name(self) + " / " + _get_pretty_name(other)
         return rpy(res)
 
+    def __sub__(self, other):
+        if is_number(other):
+            return super().__sub__(other)
+        res = super().__sub__(other)
+        res.name = _get_pretty_name(self) + " - " + _get_pretty_name(other)
+        return rpy(res)
+
 # def sdiv(a, b):
 #     if isinstance(a,list):
 #         return lmap(lambda x: sdiv(x, b), a)

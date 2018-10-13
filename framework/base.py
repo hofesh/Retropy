@@ -457,6 +457,9 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
         if symbol.name and symbol.name.startswith("~"):
             reget = False
 
+        if cache == False:
+            reget = True
+
         if reget != False:
             
             # if a mode has changed, reget (and if not, keep source mode)
@@ -470,6 +473,13 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
             if is_symbol(symbol.name) and symbol.name.rebal != rebal:
                 if rebal is None:
                     rebal = symbol.name.rebal # just in case we do reget (say if trim=True), keep the symbol rebal
+                else:
+                    reget = True
+
+            # if a source has changed, reget (and if not, keep source source)
+            if is_symbol(symbol.name) and symbol.name.source != source:
+                if source is None:
+                    source = symbol.name.source
                 else:
                     reget = True
 
@@ -611,13 +621,13 @@ def pr(sym):
     return get(sym, mode="PR")
 price = pr
 
-def reget_old_tickers(all=None, source=None, days_old=None):
-    if not source is None:
-        all = get(etfs.all_from_meta, source=source, error='ignore', cache_fails=True)
-    elif not all is None:
-        pass
-    else:
-        raise Exception("all or source must be defined")
+def reget_old_tickers(all, source=None, days_old=None):
+    # if not source is None:
+    #     all = get(etfs.all, source=source, error='ignore', cache_fails=True)
+    # elif not all is None:
+    #     pass
+    # else:
+    #     raise Exception("all or source must be defined")
 
     if isinstance(all[0], str):
         all = get(all, source=source, error='ignore')

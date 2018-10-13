@@ -64,8 +64,8 @@ def cagr(s):
 def cagr_pr(s):
     return cagr(pr(s))
 
-def ret(s):
-    return s.pct_change()
+def ret(s, n=1):
+    return s.pct_change(n)
 
 def i_ret(s):
     s = s.fillna(0)
@@ -227,15 +227,8 @@ def pr_beta(s):
 def pr_cagr(s):
     return cagr(price(s))
 
-def pr_lr_cagr(s):
-    x = lr(price(s))
-    x = x[x>0] # we won't be able to calc cagr for negative values
-    return cagr(x)
-
 def pr_cagr_full(s):
     return cagr(get(s, untrim=True, mode="PR"))
 
-def lrretm_beta_SPY(s):
-    return lrret_beta(s, 'SPY', freq="M")
 
 

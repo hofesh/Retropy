@@ -34,3 +34,11 @@ def max_dd_pr(s):
     return max(-dd(pr(s)))
 
     
+def pr_lr_cagr(s):
+    x = lr(price(s))
+    x = x[x>0] # we won't be able to calc cagr for negative values
+    return cagr(x)
+
+def lrretm_beta_SPY(s):
+    return lrret_beta(s, 'SPY', freq="M")
+

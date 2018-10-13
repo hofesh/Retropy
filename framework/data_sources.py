@@ -221,14 +221,17 @@ class YahooDataSource(DataSource):
 
 class QuandlDataSource(DataSource):
     def fetch(self, symbol, conf):
-        return quandl.get(symbol.name)
+        return quandl.get(symbol.ticker)
 
     def process(self, symbol, df, conf):
-        if symbol.field:
+        if not symbol.field is None:
+            int_field = as_int(symbol.field)
+            if not int_field is None:
+                return df[df.columns[int_field]].dropna()
             if not symbol.field in df.columns:
                 warn(f"field {symbol.field} not found in {symbol} raw DataFrame")
                 return None
-            return df[symbol.field]
+            return df[symbol.field].dropna()
         if conf.mode == "TR" or conf.mode == "PR":
             if "Close" in df.columns:
                 return df["Close"]
