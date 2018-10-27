@@ -4,7 +4,8 @@ import math
 
 from framework.utils import *
 from framework.RpySeries import *
-from framework.base import *
+import framework.base as base
+from framework.draw_downs import *
 
 
 
@@ -148,15 +149,17 @@ def mstd(s, n=365, dropna=True):
 def msharpe(s, n=365, dropna=True):
     return name(mcagr(s, n, dropna) / mstd(s, n, dropna), s.name + " sharpe")
 
-def ulcer(x):
+def ulcer(x, dd_func=dd):
     if x is None:
         return np.nan
-    cmax = np.maximum.accumulate(x)
-    r = (x/cmax-1)*100
-    return math.sqrt(np.sum(r*r)/x.shape[0])
+    _dd = dd_func(x)
+    return math.sqrt(np.sum(_dd*_dd)/x.shape[0])
 
 def ulcer_pr(x):
     return ulcer(pr(x))
+
+def ulcer_pr_rolling(x):
+    return ulcer(pr(x), dd_func=dd_rolling)
 
 
 def mret(s):
@@ -228,7 +231,7 @@ def pr_cagr(s):
     return cagr(price(s))
 
 def pr_cagr_full(s):
-    return cagr(get(s, untrim=True, mode="PR"))
+    return cagr(base.get(s, untrim=True, mode="PR"))
 
 
 

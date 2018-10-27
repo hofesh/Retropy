@@ -56,7 +56,7 @@ def get_cef_meta(s, fld):
     if is_cef(s):
         return get_meta(s, fld, cef_only=True)
     #warn(f"{get_name(s)} is not an CEF, can't get {fld}")
-    return 0
+    return None # was zero
 
 def get_meta_fee(s):
     return get_etf_cef_meta(s, 'fees', 'expense_ratio', etf_alt_fld='mw_fees')

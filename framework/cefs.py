@@ -86,11 +86,14 @@ def get_cef_nav_ticker(s):
         nav = f'X{s}X'
     return nav
 
-def get_cef_nav(s, source="AV"):
+def get_cef_nav(s, source=None):
     if s is None:
         return None
     if not is_cef(s):
         return None
+    if is_series(s) and source is None:
+        source = s.name.source
+    source = source or "AV"
     return get(get_cef_nav_ticker(s), source=source, mode="PR", error='ignore', cache_fails=True)
 
 def get_cef_premium(s, source="AV"):
@@ -187,7 +190,21 @@ def get_cef_nav_intr(s):
     return name(get_intr(s, {"mode": "NTR"}, alt_price_symbol=get_cef_nav_ticker(s)), f"{get_name(s, nomode=True)} NAV INTR")
 
 
+def show_cef_premium_and_returns(s):
+    nav = get_cef_nav_ntr(s)
+    if nav is None:
+        return
+    frm.show(get_cef_premium(s), (ntr(s) / nav - 1)*100, ta=False, title="Effect of premium/discount of NTR returns")
+
+def show_cef_relative_premium(a, b):
+    a = get_cef_premium(a)
+    b = get_cef_premium(b)
+    if a is None or b is None:
+        return
+    frm.show(1, a - b, ta=False, log=False, title="Relative Premium")
+
 def analyze_cef(s, base='SPY'):
+    s = get(s)
     if is_cef(base):
         base_cef = base
         base_ntr = ntr(base)
@@ -202,14 +219,26 @@ def analyze_cef(s, base='SPY'):
         frm.show(0, 5, get_cef_nav_yield(base_ntr, type='true', reduce_fees=False), get_yield_true_no_fees(base_ntr), ta=False, title="NAV and Market net-yield (no fees)")
     show_cef_premium(s, base_cef)
     if not base_cef is None:
-        frm.show(1, get_cef_premium(s) - get_cef_premium(base), ta=False, log=False, title="Relative Premium")
-    frm.show(get_cef_premium(s), (ntr(s) / get_cef_nav_ntr(s) - 1)*100, ta=False, title="Effect of premium/discount of NTR returns")
+        show_cef_relative_premium(s, base)
+    show_cef_premium_and_returns(s)
     show_cef_zscore(s, base_cef)
     show_cef_nav_and_pr(s, base_cef)
     show_cef_nav_and_ntr(s, base_cef)
     frm.show_dd(get_cef_nav(s), get_cef_nav_ntr(s), get_cef_nav(base_cef), get_cef_nav_ntr(base_cef), do_get=False, mode='', title_prefix="NAV / NAV-NTR")
     frm.show_comp(s, base)
 
+def get_pr_loss_last_week(s):
+    # if is_cef(s):
+    #     nav = get_cef_nav(s)
+    #     if nav is None:
+    #         return None
+    # else:
+    nav = get(s, mode="PR", untrim=True)
+    nav = nav["2018-10-01":]
+    if len(nav) < 10:
+        return None
+    return (nav[-1] / nav[0] - 1) * 100
+    
 def get_cef_nav_loss_2010(s):
     if is_cef(s):
         nav = get_cef_nav(s)
@@ -236,6 +265,9 @@ def get_cef_coverage(s):
     if r is None:
         return r
     return r - 100
+
+def get_cef_leverage(s):
+    return get_cef_meta(s, "total_leverage")
 
 def get_cef_nav_or_pr(s, untrim):
     if is_cef(s):

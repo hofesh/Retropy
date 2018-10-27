@@ -1,5 +1,6 @@
 import numpy as np
 import statsmodels.api as sm
+from scipy.stats import linregress
 
 from framework.symbol import *
 from framework.stats_basic import *
@@ -88,3 +89,11 @@ def lr_rolling(s, n=52, freq="W"):
     df = pd.DataFrame(s)
     elr = df.asfreq(freq).rolling(n).apply(last_lr)
     return name(elr.iloc[:, 0], f"{get_name(s)} rlr")
+
+
+def corr(a, b, p_value=False):
+    a, b = sync(a, b)
+    res = linregress(a, b)
+    if p_value:
+        return (res.rvalue, res.pvalue)
+    return res.rvalue    

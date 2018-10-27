@@ -172,14 +172,14 @@ def curr_price(symbol):
 #    if fromCur == "USD":
 #        return get(toCur + "=X", "Y").map(lambda x: 1.0/x)
 
-def getForex(fromCur, toCur, inv=False):
+def getForex(fromCur, toCur, inv=False, cache=True):
     if fromCur == toCur: return 1
     #tmp = get(fromCur + toCur + "@CUR")
     if inv:
-        tmp = 1/getForex(toCur, fromCur, inv=False)
+        tmp = 1/getForex(toCur, fromCur, inv=False, cache=cache)
         tmp.name = fromCur + "/" + toCur + "@IC"
         return tmp
-    tmp = get(fromCur + "/" + toCur + "@IC")
+    tmp = get(fromCur + "/" + toCur + "@IC", cache=cache)
     tmp = tmp.reindex(pd.date_range(start=tmp.index[0], end=tmp.index[-1]))
     tmp = tmp.fillna(method="ffill")
     return tmp
@@ -1916,26 +1916,6 @@ def show_dd(*all, mode="PR", dd_func=dd, legend=True, title_prefix='', do_get=Tr
     for s in all:
         print(f"ulcer {get_name(s)}: {ulcer(s):.2f}")
     show(lmap(dd_func, all), -10, -20, -30, -40, -50, ta=False, title=f"{title_prefix} {mode} {get_func_name(dd_func)} draw-down", legend=legend, **args)
-
-def _despike(s, std, window, shift):
-    if isinstance(s, list):
-        return [despike(x) for x in s]
-    s = unwrap(s)
-    new_s = s.copy()
-    ret = logret(s, dropna=False).fillna(0)
-    new_s[(ret - ret.mean()).abs() > ret.shift(shift).rolling(window).std().fillna(ret.max()) * std] = np.nan
-    return name(new_s.interpolate(), s.name)
-
-# we despike from both directions, since the method has to warm up for the forst window
-def despike(s, std=8, window=30, shift=10):
-    os = s
-    s = _despike(s, std=std, window=window, shift=shift)
-    s = _despike(s[::-1], std=std, window=window, shift=shift)[::-1]
-    # if np.any(os != s):
-    #     print(f"{s.name} was despiked")
-    return s
-
-
 
 ##########################################
 

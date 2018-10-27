@@ -116,7 +116,7 @@ def highlight_sec(s):
 #     is_max = s == s.max()
 #     return ['background-color: yellow' if v else '' for v in is_max]    
 
-def zscore_df_style(df, names, marks):
+def zscore_df_style(df, names, marks, fillna):
     df.columns = names
     df.index = df.index.str.replace(" NTR", "").str.replace(" TR", "").str.replace("@AV", "").str.replace("@Y", "")
 
@@ -127,14 +127,17 @@ def zscore_df_style(df, names, marks):
     #df.style.highlight_max(axis=0, color='green').highlight_min(axis=0, color='red')
     
     #df.style.bar(subset=['cagr', 'get_curr_yield_min2', 'mutual_dd_rolling_pr_SPY', 'ulcer_pr', 'get_meta_aum_log', 'get_meta_fee'], align='left', color=['#5fba7d'])
-    return df.fillna(0).reset_index().style\
+    # fillna(0).
+    if fillna:
+        df = df.fillna(0)
+    return df.reset_index().style\
         .bar(subset=['nav_loss_2010', 'nav_loss_2013', 'premium', 'mutual_dd', 'DC', 'zscr'], align='mid', color=['#5fba7d', '#d65f5f'])\
-        .bar(subset=['cagr', 'nn_yield', 'yld_zs', 'coverage'], align='mid', color=['#d65f5f', '#5fba7d'])\
-        .bar(subset=['UC'], align='left', color=['#5fba7d'])\
-        .bar(subset=['ulcer_pr', 'ulcer_nav', 'u_nav_ntr', 'income_ulcer', 'roc_3y', 'ntr_maxdd', 'ntr_mxd_08'], align='left', color=['#d65f5f'])\
+        .bar(subset=['last_week', 'cagr', 'nn_yield', 'yld_zs', 'coverage'], align='mid', color=['#d65f5f', '#5fba7d'])\
+        .bar(subset=['UC', 'usd_corr'], align='left', color=['#5fba7d'])\
+        .bar(subset=['ulcer_pr_rol', 'ulcer_pr', 'ulcer_nav', 'u_nav_ntr', 'income_ulcer', 'roc_3y', 'ntr_maxdd', 'ntr_mxd_08'], align='left', color=['#d65f5f'])\
         .bar(subset=['start_yield', 'n_yield', 'm_yield'], align='left', color=['gray'])\
         .bar(subset=['aum'], align='left', color=['#9fdfbe'])\
-        .bar(subset=['fee'], align='left', color=['#ffb3b3'])\
+        .bar(subset=['fee', 'usd_pval', 'lev'], align='left', color=['#ffb3b3'])\
         .format({'aum': "{:,.0f}"})\
         .format({'n_yield': "{:.2f}%"})\
         .format({'m_yield': "{:.2f}%"})\
@@ -143,12 +146,17 @@ def zscore_df_style(df, names, marks):
         .format({'cagr': "{:.2f}%"})\
         .format({'nav_loss_2010': "{:.2f}%"})\
         .format({'nav_loss_2013': "{:.2f}%"})\
+        .format({'last_week': "{:.2f}%"})\
         .format({'premium': "{:.1f}%"})\
+        .format({'lev': "{:.0f}%"})\
         .format({'income_ulcer': "{:.2f}"})\
         .format({'zscr': "{:.2f}"})\
+        .format({'ulcer_pr_rol': "{:.2f}"})\
         .format({'ulcer_pr': "{:.2f}"})\
         .format({'ulcer_nav': "{:.2f}"})\
         .format({'u_nav_ntr': "{:.2f}"})\
+        .format({'usd_corr': "{:.2f}"})\
+        .format({'usd_pval': "{:.2f}"})\
         .format({'ntr_maxdd': "{:.2f}"})\
         .format({'ntr_mxd_08': "{:.2f}"})\
         .format({'coverage': "{:.1f}"})\
@@ -162,20 +170,27 @@ def zscore_df_style(df, names, marks):
         .hide_index()
 
 
-def display_zscores(all, n=None, idx=None, funcs=None, names=None, weights=None, _cache=[None], marks=None):
+def display_zscores(all, n=None, idx=None, funcs=None, names=None, weights=None, _cache=[None], marks=None, fillna=False):
     if funcs is None:
-        funcs=[get_cef_section, get_sponsor, get_cef_roc_3y, get_cef_coverage, get_income_ulcer, get_cef_curr_premium, get_cef_curr_zscore, get_cef_nav_loss_2010, get_cef_nav_loss_2013, get_upside_capture_SPY, cagr, get_start_yield, get_meta_yield, get_curr_yield_normal_no_fees, get_curr_yield_min2, get_curr_yield_zscore, ulcer_pr, ulcer_nav, ulcer_nav_ntr, mutual_dd_rolling_pr_SPY, get_downside_capture_SPY, get_cef_maxdd_nav_ntr, get_cef_maxdd_nav_ntr_2008, get_meta_aum, get_meta_fee]
+        funcs=[get_cef_section, get_sponsor, get_usd_corr, get_usd_pvalue, get_cef_roc_3y, get_cef_coverage, get_income_ulcer,   get_cef_leverage, get_cef_curr_premium, get_cef_curr_zscore, get_cef_nav_loss_2010, get_cef_nav_loss_2013, get_pr_loss_last_week, get_upside_capture_SPY, cagr, get_start_yield, get_meta_yield, get_curr_yield_normal_no_fees, get_curr_yield_min2, get_curr_yield_zscore, ulcer_pr_rolling, ulcer_pr, ulcer_nav, ulcer_nav_ntr, mutual_dd_rolling_pr_SPY, get_downside_capture_SPY, get_cef_maxdd_nav_ntr, get_cef_maxdd_nav_ntr_2008, get_meta_aum, get_meta_fee]
     if names is None:
-        names = ['sec',         'sponsor',  'roc_3y',       'coverage',         'income_ulcer',   'premium',            'zscr',                'nav_loss_2010',      'nav_loss_2013',        'UC',                  'cagr', 'start_yield', 'm_yield',      'n_yield',                      'nn_yield',         'yld_zs',              'ulcer_pr', 'ulcer_nav', 'u_nav_ntr', 'mutual_dd',              'DC',                    'ntr_maxdd',            'ntr_mxd_08',                 'aum',     'fee', 'zmean']
+        names = ['sec',         'sponsor',  'usd_corr',    'usd_pval',     'roc_3y',       'coverage',         'income_ulcer',   'lev',            'premium',            'zscr',                'nav_loss_2010',      'nav_loss_2013',     'last_week',            'UC',                  'cagr', 'start_yield', 'm_yield',      'n_yield',                      'nn_yield',         'yld_zs',              'ulcer_pr_rol',   'ulcer_pr', 'ulcer_nav', 'u_nav_ntr', 'mutual_dd',              'DC',                    'ntr_maxdd',            'ntr_mxd_08',                 'aum',     'fee', 'zmean']
     if weights is None:
-#        weights=[0,               0,         0,              1,                 -1,                -1,                  -1,                    -5,                    -5,                    1,                     1,      0,             5,              5,                              1,                 1,                      -5,         -5,           -1,              -5,                   -5,                     -1,                      -1,                          0,        -1         ]
-#        weights=[0,               0,         0,              1,                 -1,                -1,                  -1,                    -5,                    -5,                    1,                     1,      0,             0,              0,                              1,                 1,                      -5,         -5,           -1,              -5,                   -5,                     -1,                      -1,                          0,        -1         ]
-#        weights=[0,               0,         0,              1,                 -1,                -1,                  -1,                    -5,                    -5,                    1,                     1,      0,             1,              1,                              1,                 1,                      -5,         -5,           -1,              -5,                   -5,                     -1,                      -1,                         1,        -1         ]
-#        weights=[0,               0,         0,              0,                 -0,                -0,                  -0,                    -5,                    -5,                    0,                     0,      0,             1,              0,                              0,                 0,                      -5,         -5,           -0,              -5,                   -5,                     -0,                      -0,                         0,        -0         ]
-# CEFS:
-        weights=[0,               0,         0,              2,                 -2,                -2,                  -2,                    -2,                    -2,                    2,                     2,      0,              20,              0,                              0,                5,                      -4,         -4,           -4,              -10,                   -10,                     -5,                      -5,                         2,        -2         ]
-# ETFS:
-#        weights=[0,               0,         0,              1,                 -1,                -1,                  -1,                    -5,                    -5,                    1,                     1,      0,             0,              0,                              1,                 1,                      -5,         -5,           -1,              -5,                   -5,                     -1,                      -1,                          0,        -1         ]
+#        weights=[0,               0,        0,            0,               0,              1,                 -1,                -5,               -1,                  -1,                   -5,                    -5,                   0,                    1,                     1,      0,             5,              5,                              1,                 1,                      -5,                 -5,         -5,           -1,              -5,                   -5,                     -1,                      -1,                          0,        -1         ]
+#        weights=[0,               0,        0,            0,               0,              1,                 -1,                -5,               -1,                  -1,                   -5,                    -5,                   0,                    1,                     1,      0,             0,              0,                              1,                 1,                      -5,                 -5,         -5,           -1,              -5,                   -5,                     -1,                      -1,                          0,        -1         ]
+#        weights=[0,               0,        0,            0,               0,              1,                 -1,                -5,               -1,                  -1,                   -5,                    -5,                   0,                    1,                     1,      0,             1,              1,                              1,                 1,                      -5,                 -5,         -5,           -1,              -5,                   -5,                     -1,                      -1,                         1,        -1         ]
+#        weights=[0,               0,        0,            0,               0,              0,                 -0,                -5,               -0,                  -0,                   -5,                    -5,                   0,                    0,                     0,      0,             1,              0,                              0,                 0,                      -5,                 -5,         -5,           -0,              -5,                   -5,                     -0,                      -0,                         0,        -0         ]
+# CEFS:-20,               -0,                   -5,                 
+        weights=[0,               0,        0,            0,               0,              2,                 -2,                -2,               -2,                  -2,                   -2,                    -2,                   2,                    2,                     2,      0,              2,              2,                              0,                2,                    -2,                   -2,         -2,           -2,              -2,                   -2,                     -2,                      -2,                         0,        -2         ]
+#         weights=[0,               0,        0,            0,               0,              2,                 -2,                -5,               -2,                  -2,                   -50,                    -50,                   10,                    2,                     2,      0,              10,              10,                              0,                5,                    -50,                   -50,         -4,           -4,              -10,                   -10,                     -5,                      -5,                         2,        -2         ]
+#         weights=[0,               0,        0,            0,               0,              2,                 -2,                -5,               -2,                  -2,                   -100,                    -100,                   10,                    2,                     2,      0,              10,              10,                              0,                5,                 -500,                -500,      -4,         -4,              -100,                   -10,                     -5,                      -5,                         2,        -2         ]
+#        weights=[0,               0,        20,          -20,              0,              2,                 -2,                -5,               -2,                  -2,                   -2,                    -2,                   0,                    2,                     2,      0,              10,              10,                              0,                5,                    -5,                   -4,         -4,           -4,              -10,                   -10,                     -5,                      -5,                         2,        -2         ]
+#        weights=[0,               0,         0,           0,               0,              2,                 -2,                -5,               -2,                  -2,                   -20,                    -20,                   50,                    2,                     2,      0,              10,              10,                              0,                5,                 -5,                      -4,         -4,           -4,              -10,                   -10,                     -5,                      -5,                         2,        -2         ]
+#        weights=[0,               0,        0,            0,               0,              2,                 -2,                -5,               -2,                  -2,                    -2,                    -2,                   200,                    2,                     2,      0,              20,              0,                              0,                5,                  -5,                     -4,         -4,           -4,              -10,                   -10,                     -5,                      -5,                         2,        -2         ]
+#        weights=[0,               0,        0,            0,               0,              2,                 -2,                -5,               -2,                  -2,                   -2,                    -2,                   5,                    2,                     2,      0,              3,              3,                              0,                 5,                     -5,                  -4,         -4,           -4,              -10,                   -10,                     -5,                      -5,                         2,        -2         ]
+#        weights=[0,               0,        0,            0,               0,              2,                 -2,                -5,               -2,                  -2,                   -2,                    -2,                   5,                    2,                     2,      0,              3,              30000,                              0,                 5,                 -5,                      -4,         -4,           -4,              -10,                   -10,                     -5,                      -5,                         2,        -2         ]
+# ETFS:-20,               -0,                0,            0,                 -5,                 
+#        weights=[0,               0,        0,            0,               0,              1,                 -1,                -5,               -1,                  -1,                   -5,                    -5,                   0,                    1,                     1,      0,             0,              0,                              1,                 1,                      -5,                 -5,         -5,           -1,              -5,                   -5,                     -1,                      -1,                          0,        -1         ]
 
     print(f"weights: {weights}")
     dfz = _cache[0]
@@ -189,5 +204,5 @@ def display_zscores(all, n=None, idx=None, funcs=None, names=None, weights=None,
         _cache[0] = df
         if not idx is None:
             df = df[idx]
-        display(zscore_df_style(df[:n], names, marks))
+        display(zscore_df_style(df[:n], names, marks, fillna=fillna))
 

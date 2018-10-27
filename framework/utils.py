@@ -75,3 +75,6 @@ def as_int(s):
         return int(s)
     except:
         return None
+
+def drop_duplicates_index(s):
+    return s[~s.index.duplicated()]

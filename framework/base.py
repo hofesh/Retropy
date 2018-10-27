@@ -13,6 +13,8 @@ from framework.utils import *
 from framework.symbol import *
 from framework.RpySeries import *
 from framework.data_sources import *
+from framework.stats_basic import *
+#from framework.stats_basic import *
 
 
 
@@ -381,6 +383,26 @@ def do_interpolate(s):
     s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
     return s.interpolate()
 
+def _despike(s, std, window, shift):
+    if isinstance(s, list):
+        return [despike(x) for x in s]
+    s = unwrap(s)
+    new_s = s.copy()
+    ret = logret(s, dropna=False).fillna(0)
+    new_s[(ret - ret.mean()).abs() > ret.shift(shift).rolling(window).std().fillna(ret.max()) * std] = np.nan
+    return name(new_s.interpolate(), s.name)
+
+# we despike from both directions, since the method has to warm up for the forst window
+def despike(s, std=8, window=30, shift=10):
+    os = s
+    s = _despike(s, std=std, window=window, shift=shift)
+    s = _despike(s[::-1], std=std, window=window, shift=shift)[::-1]
+    # if np.any(os != s):
+    #     print(f"{s.name} was despiked")
+    return s
+
+
+
 def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAdj=True, adj=None, mode=None, secondary="Y", interpolate=True, despike=False, trim=False, untrim=False, remode=True, start=None, end=None, freq=None, rebal=None, silent=False, error='raise', drop_corrupt=True, drop_zero=True):
     # tmp
     # if isinstance(symbol, list) and len(symbol) == 2 and symbol[1] in data_sources.keys():
@@ -636,4 +658,4 @@ def reget_old_tickers(all, source=None, days_old=None):
         print(f"re-fetching {len(all)} symbols ..")
     else:
         print("All symbols are up-to date")
-    _ = get(lmap(get_ticker_name, all), cache=False, source=source, error='ignore')
+    _ = get(all, cache=False, source=source, error='ignore')

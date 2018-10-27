@@ -290,7 +290,7 @@ def get_yield_live(s, type=None, reduce_fees=True, live=True, type_name=False):
     type = type or 'rolling'
     yld = get_yield(s, type=type, reduce_fees=reduce_fees, divs_only=live, do_resample=False).dropna()
     if yld.shape[0] == 0:
-        return 0
+        return None
     prc = pr(s)
     yld = yld.reindex(prc.index)
     yld = yld.fillna(method='ffill')
@@ -311,8 +311,9 @@ def get_yield_live_all(s, reduce_fees=True):
 def show_yield(*all, reduce_fees=False, detailed=True):
     ylds = lmap(partial(get_yield_live_all, reduce_fees=reduce_fees), all)
     ylds = flattenLists(ylds)
+    ylds = [y for y in ylds if not y is None]
     title = f"{get_mode(all[0])} Yields {'with fees' if reduce_fees else 'no fees'}"
-    if detailed and len(all) == 1:
+    if detailed and len(all) == 1 and len(ylds) > 0:
         s = all[0]
         dist = divs(s)
         dist = align_with(dist, ylds[0])

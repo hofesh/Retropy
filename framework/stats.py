@@ -8,6 +8,7 @@ from framework.base import *
 from framework.yields import *
 from framework.draw_downs import *
 from framework.lr import *
+import framework.asset_classes as ac
 
 
 def ma(s, n):
@@ -42,3 +43,9 @@ def pr_lr_cagr(s):
 def lrretm_beta_SPY(s):
     return lrret_beta(s, 'SPY', freq="M")
 
+
+def get_usd_corr(s):
+    return -corr(logret(eow(s)), logret(eow(get(ac.usdBroad))))
+    
+def get_usd_pvalue(s):
+    return corr(logret(eow(s)), logret(eow(get(ac.usdBroad))), p_value=True)[1]
