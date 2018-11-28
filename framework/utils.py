@@ -3,6 +3,9 @@ import functools as ft
 import types
 import sys
 
+import numpy as np
+import pandas as pd
+
 trimmed_messages = set()
 def print_norep(msg, **args):
     if not msg in trimmed_messages:
@@ -78,3 +81,38 @@ def as_int(s):
 
 def drop_duplicates_index(s):
     return s[~s.index.duplicated()]
+
+
+# we need this functions in base.py, but don't want a cirular dependency with base and stats_basic, so it's here for now
+def ret(s, n=1):
+    return s.pct_change(n)
+
+def i_ret(s):
+    s = s.fillna(0)
+    return np.cumprod(s + 1)
+
+def logret(s, dropna=True, fillna=False):
+    res = np.log(s) - np.log(s.shift(1))
+    if "name" in dir(res) and s.name:
+        res.name = "logret(" + s.name + ")"
+    if fillna:
+        res[0] = 0
+    elif dropna:
+        res = res.dropna()
+    return res
+
+# we sometimes get overflow encountered in exp RuntimeWarning from i_logret, so we disable them
+np.seterr(over='ignore') 
+def i_logret(s):
+    res = np.exp(np.cumsum(s))
+    if np.isnan(s[0]):
+        res[0] = 1
+    return res
+
+# safely convert a float/string/mixed series to floats
+# to remove commas we need the data type to be "str"
+# but if we assume it's "str" wihtout converting first, and some are numbers
+# those numbers will become NaN's.
+def series_as_float(ser):
+    return pd.to_numeric(ser.astype(str).str.replace(",", "").str.replace("%", "").str.replace("$", ""), errors="coerce")
+

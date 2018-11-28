@@ -9,11 +9,13 @@ import numpy as np
 
 import os.path
 
+import framework.conf as global_conf
 from framework.utils import *
 from framework.symbol import *
 from framework.RpySeries import *
 from framework.data_sources import *
-from framework.stats_basic import *
+# don't call stats_basic from base, it messes things up with dependencies
+#from framework.stats_basic import *
 #from framework.stats_basic import *
 
 
@@ -380,7 +382,8 @@ def is_not_corrupt(s):
 
 
 def do_interpolate(s):
-    s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
+    new_idx = pd.date_range(start=s.index[0], end=s.index[-1])
+    s = s.reindex(new_idx)
     return s.interpolate()
 
 def _despike(s, std, window, shift):
@@ -537,7 +540,7 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
         if symbol == "":
             raise Exception("attemping to get an empty string as symbol name")
         
-        if "ignoredAssets" in globals() and ignoredAssets and symbol in ignoredAssets:
+        if global_conf.ignoredAssets and symbol in global_conf.ignoredAssets:
             return wrap(pd.Series(), "<empty>")
 
         # special handing for composite portfolios
@@ -574,8 +577,9 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
                 s = globals()["despike"](s)
 
             if interpolate and s.shape[0] > 0:
-                s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
-                s = s.interpolate()
+                s = do_interpolate(s)
+                # s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
+                # s = s.interpolate()
 
 
     # given we have "s" ready, some operations should be performed if reuested regardless if the symbols was reget or not

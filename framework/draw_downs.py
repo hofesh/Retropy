@@ -3,6 +3,7 @@ from collections import namedtuple
 from framework.RpySeries import *
 from framework.base import *
 
+
 dd_item = namedtuple("dd_item", ["start", "end", "depth"])
 
 def dd(x):

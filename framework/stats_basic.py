@@ -4,7 +4,6 @@ import math
 
 from framework.utils import *
 from framework.RpySeries import *
-import framework.base as base
 from framework.draw_downs import *
 
 
@@ -65,30 +64,6 @@ def cagr(s):
 def cagr_pr(s):
     return cagr(pr(s))
 
-def ret(s, n=1):
-    return s.pct_change(n)
-
-def i_ret(s):
-    s = s.fillna(0)
-    return np.cumprod(s + 1)
-
-def logret(s, dropna=True, fillna=False):
-    res = np.log(s) - np.log(s.shift(1))
-    if "name" in dir(res) and s.name:
-        res.name = "logret(" + s.name + ")"
-    if fillna:
-        res[0] = 0
-    elif dropna:
-        res = res.dropna()
-    return res
-
-# we sometimes get overflow encountered in exp RuntimeWarning from i_logret, so we disable them
-np.seterr(over='ignore') 
-def i_logret(s):
-    res = np.exp(np.cumsum(s))
-    if np.isnan(s[0]):
-        res[0] = 1
-    return res
 
     
 def percentile(s, p):
@@ -229,9 +204,6 @@ def pr_beta(s):
 
 def pr_cagr(s):
     return cagr(price(s))
-
-def pr_cagr_full(s):
-    return cagr(base.get(s, untrim=True, mode="PR"))
 
 
 

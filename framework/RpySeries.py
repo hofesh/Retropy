@@ -8,7 +8,7 @@ import framework.base
 def _get_pretty_name(s):
     if type(s.name).__name__ == "Symbol":
         return s.name.pretty_name
-    return s.name
+    return s.name or ''
 
 class RpySeries(pd.Series):
     def __hash__(self):

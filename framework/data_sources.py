@@ -4,6 +4,7 @@ import requests
 import json
 import re
 from bs4 import BeautifulSoup
+from io import StringIO
 
 import pandas as pd
 
@@ -728,7 +729,6 @@ class TASEDataSource(DataSource):
             lines = text.split("\n")
             text = "\n".join(lines[4:])
 
-            from io import StringIO
             text = StringIO(text)
 
             if typ == "sal":
@@ -781,7 +781,54 @@ class FundFlowDataSource(DataSource):
     def process(self, symbol, df, conf):
         return df["flow"]
 
+
+class EdenDataSource(DataSource):
+    def fetch(self, symbol, conf):
+        EDEN = """
+Date	Value
+01-Jan-2016	$1,000.0000
+01-Feb-2016	$910.5607
+01-Mar-2016	$918.3250
+01-Apr-2016	$979.3130
+01-May-2016	$964.3864
+01-Jun-2016	$993.0645
+01-Jul-2016	$947.6794
+01-Aug-2016	$982.4717
+01-Sep-2016	$1,051.3543
+01-Oct-2016	$1,047.5805
+01-Nov-2016	$995.6747
+01-Dec-2016	$1,077.7583
+31-Dec-2016	$1,084.7515
+31-Jan-2017	$1,120.1306
+28-Feb-2017	$1,139.9899
+01-Apr-2017	$1,154.4490
+01-May-2017	$1,194.7856
+01-Jun-2017	$1,204.7632
+30-Jun-2017	$1,236.1665
+30-Jul-2017	$1,280.3044
+30-Aug-2017	$1,297.5405
+30-Sep-2017	$1,288.2847
+30-Oct-2017	$1,293.6846
+30-Nov-2017	$1,268.1199
+31-Dec-2017	$1,254.4560
+31-Jan-2018	$1,362.5164
+28-Feb-2018	$1,377.6356
+31-Mar-2018	$1,315.6067
+30-Apr-2018	$1,407.3427
+31-May-2018	$1,459.2245
+30-Jun-2018	$1,456.8649
+31-Jul-2018	$1,452.3415
+31-Aug-2018	$1,418.2482
+30-Sep-2018	$1,415.6050
+"""
+        df = pd.read_csv(StringIO(EDEN), sep="\t", thousands=",", index_col="Date", parse_dates=True, dayfirst=True)
+        return df
+
+    def process(self, symbol, df, conf):
+        return series_as_float(df["Value"])#.str.replace("$", "").str.replace(",", "").astype("float")
+
 data_sources = {
+    "EDEN": EdenDataSource("EDEN"),
     "TASE": TASEDataSource("TASE"),
     "B": BloombergDataSource("B"),
     "JT": JustEtfDataSource("JT"),

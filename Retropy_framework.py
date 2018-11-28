@@ -162,7 +162,7 @@ def xirr(values, dates):
 
 
 def curr_price(symbol):
-    if symbol in ignoredAssets: return 0
+    if symbol in conf.ignoredAssets: return 0
     return get(symbol)[-1]
 
 #def getForex(fromCur, toCur):
@@ -174,20 +174,24 @@ def curr_price(symbol):
 
 def getForex(fromCur, toCur, inv=False, cache=True):
     if fromCur == toCur: return 1
-    #tmp = get(fromCur + toCur + "@CUR")
+
+    div100 = 1
+    if fromCur == "GBC":
+        div100 = 100
+        fromCur = "GBP"
+
     if inv:
         tmp = 1/getForex(toCur, fromCur, inv=False, cache=cache)
         tmp.name = fromCur + "/" + toCur + "@IC"
-        return tmp
+        return tmp / div100
     tmp = get(fromCur + "/" + toCur + "@IC", cache=cache)
     tmp = tmp.reindex(pd.date_range(start=tmp.index[0], end=tmp.index[-1]))
     tmp = tmp.fillna(method="ffill")
-    return tmp
-    #return wrap(tmp, fromCur+toCur)
+    return tmp / div100
 
-def convertSeries(s, fromCur, toCur, inv=False):
+def convertSeries(s, fromCur, toCur, inv=False, cache=True):
     if fromCur == toCur: return s
-    rate = getForex(fromCur, toCur, inv=inv)
+    rate = getForex(fromCur, toCur, inv=inv, cache=cache)
     s = get(s)
     s = (s*rate).dropna()
     return s
@@ -458,9 +462,12 @@ def plotly_area(df, title=None):
     data = []
     for col in tt2:
         s = tt2[col]
+        x = s.index
+        if isinstance(x, pd.DatetimeIndex):
+            x = x.to_pydatetime()
         trace = go.Scatter(
             name=col,
-            x=s.index.to_datetime(),
+            x=x,
             y=s.values,
             text=["{:.1f}%".format(v) for v in tt[col].values], # use text as non-cumsum values
             hoverinfo='name+x+text',
@@ -472,21 +479,22 @@ def plotly_area(df, title=None):
     mar = 30
     margin=gol.Margin(l=mar,r=mar,b=mar,t=mar,pad=0)
     legend=dict(x=0,y=1,traceorder='reversed',
-        bgcolor='#FFFFFFBB',bordercolor='#888888',borderwidth=1,
+        #bgcolor='#FFFFFFBB',bordercolor='#888888',borderwidth=1,
+        bgcolor='rgb(255,255,255,50)',bordercolor='#888888',borderwidth=1,
         font=dict(family='sans-serif',size=12,color='#000'),
     )    
     layout = go.Layout(margin=margin, legend=legend, title=title,
-        #showlegend=True,
+        showlegend=True,
         xaxis=dict(
             type='date',
         ),
         yaxis=dict(
-            type='linear',
-            range=[1, 100],
-            dtick=20,
-            ticksuffix='%'
+           type='linear',
+           range=[1, 100],
+           dtick=20,
+           ticksuffix='%'
         )
-    )
+     )
     fig = go.Figure(data=data, layout=layout)
     py.iplot(fig, filename='stacked-area-plot')
        
@@ -1698,16 +1706,16 @@ def show_cum_income_relative(*all, base):
 def show_rr__yield_fees__mutual_dd_rolling_pr_SPY(*all):
     show_rr2(*all, ret_func=[get_curr_yield_rolling_no_fees, get_curr_yield_rolling], risk_func=mutual_dd_rolling_pr_SPY, title="Impact of fees on yield")
 
-def show_comp(target, base, extra=None, mode="NTR", despike=False):
+def show_comp(target, base, extra=None, mode="NTR", despike=False, cache=True):
     if extra is None:
         extra = []
     elif isinstance(extra, list):
         pass
     else:
         extra = [extra]
-    analyze_assets(*extra, target=target, base=base, mode=mode, despike=despike)
+    analyze_assets(*extra, target=target, base=base, mode=mode, despike=despike, cache=cache)
 
-def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=None, despike=False, few=None, detailed=False):
+def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=None, despike=False, few=None, detailed=False, cache=True):
     if any(map(lambda x:isinstance(x, list), all)):
         raise Exception("analyze_assets individual argument cannot be lists")
 
@@ -1722,7 +1730,7 @@ def analyze_assets(*all, target=None, base=None, mode="NTR", start=None, end=Non
     all_modes = set(map(lambda s: s.name.mode, filter(is_series, all + [target, base])))
     print(f"Analyzing assets with internal modes {list(all_modes)} and requested mode [{mode}]")
 
-    all = get([target, base] + all, start=start, end=end, despike=despike, mode=mode) # note we don't trim
+    all = get([target, base] + all, start=start, end=end, despike=despike, mode=mode, cache=cache) # note we don't trim
     target, base, *extra = all
     all = [s for s in all if not s is None]
     all_trim = get(all, trim=True)
@@ -2016,13 +2024,6 @@ def modes(s, **get_args):
 
 # In[ ]:
 
-
-# safely convert a float/string/mixed series to floats
-# to remove commas we need the data type to be "str"
-# but if we assume it's "str" wihtout converting first, and some are numbers
-# those numbers will become NaN's.
-def series_as_float(ser):
-    return pd.to_numeric(ser.astype(str).str.replace(",", "").str.replace("%", ""), errors="coerce")
 
 
 # In[ ]:
@@ -2378,6 +2379,9 @@ def show_rr__yield_cagrpr__ulcerpr_notrim(*all):
     
 #     title = title or f"PR Risk - ITR Return"
 #     plot_scatter(*res, title=title, xlabel="ulcer", ylabel="cagr", show_zero_point=True)
+def pr_cagr_full(s):
+    return cagr(get(s, untrim=True, mode="PR"))
+
 
 def start_year_full(s):
     s = get(s, untrim=True)
