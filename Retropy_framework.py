@@ -193,8 +193,10 @@ def convertSeries(s, fromCur, toCur, inv=False, cache=True):
     if fromCur == toCur: return s
     rate = getForex(fromCur, toCur, inv=inv, cache=cache)
     s = get(s)
+    nm = s.name
     s = (s*rate).dropna()
-    return s
+    s.name = nm
+    return name(s, s.name + ":" + toCur)
     
 def convertToday(value, fromCur, toCur):
     if fromCur == toCur: return value
@@ -1577,6 +1579,7 @@ display(HTML(s))
 
 from IPython.core.inputtransformer import *
 intercept = ipy == True
+intercept = False # rewrite the code: https://ipython.readthedocs.io/en/stable/config/inputtransforms.html
 if intercept and not "my_transformer_tokens_instance" in locals():
     #print("transformation hook init")
     attempted_implied_fetches = set()
