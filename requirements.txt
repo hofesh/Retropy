@@ -1,15 +1,16 @@
 # NOTE: we use pandas 0.22 for now since pandas_datareader don't support 0.23 yet
-pandas
+pandas==0.23
 quandl
 pandas_datareader
 alpha_vantage
 matplotlib
 plotly
 sklearn
-scipy
-fix_yahoo_finance
+scipy==1.2.0
+yfinance
 statsmodels
 beautifulsoup4
 python-bidi
 ratelimiter
 seaborn
+jupyter

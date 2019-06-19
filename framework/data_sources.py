@@ -11,7 +11,7 @@ import pandas as pd
 pd.core.common.is_list_like = pd.api.types.is_list_like # patch until pandas_datareader is fixed
 import pandas_datareader
 from pandas_datareader import data as pdr
-import fix_yahoo_finance as yf
+import yfinance as yf
 yf.pdr_override() # <== that's all it takes :-)
 
 import alpha_vantage
@@ -31,30 +31,30 @@ import framework.mem as gmem
 # https://www.investopedia.com/markets/api/partial/historical/?Symbol=VFINX&Type=Historical+Prices&Timeframe=Daily&StartDate=Apr+21%2C+1970&EndDate=May+21%2C+2018
 
 class DataSource:
-    
+
     def __init__(self, source):
         self.source = source
-    
+
     def fetch(self, symbol, conf):
         pass
-    
+
     def process(self, symbol, df, conf):
         pass
-    
+
     def get(self, symbol, conf):
         df = None
 
         mem_key = self.source + "#" + symbol.fullname
-        
+
         # get from mem cache
         if conf.cache and gconf.conf_cache_memory:
             if mem_key in gmem.symbols_mem_cache:
                 df = gmem.symbols_mem_cache[mem_key]
-        
+
         # get from disk cache
         if df is None and conf.cache and gconf.conf_cache_disk:
             df = cache_get(symbol, self.source)
-        
+
         # attempt to fetch the symbol
         if df is None:
             failpath = cache_file(symbol, self.source) + "._FAIL_"
@@ -81,13 +81,13 @@ class DataSource:
                 # save a note that we failed
                 Path(failpath).touch()
                 raise
-        
+
             # write to disk cache
             cache_set(symbol, self.source, df)
 
         # write to mem cache
         gmem.symbols_mem_cache[mem_key] = df
-        
+
         if conf.mode == "raw":
             return df
         else:
@@ -154,7 +154,7 @@ class ForexDataSource(DataSource):
         self.boe_code_map = dict([s.split("\t") for s in boe_forex_codes.split("\n")[1:-1]])
         self.boe_code_map["ILS"] = self.boe_code_map["NIS"]
         super().__init__(source)
-    
+
     def fetch(self, symbol, conf):
         assert len(symbol.name) == 6
         _from = symbol.name[:3]
@@ -163,12 +163,12 @@ class ForexDataSource(DataSource):
             raise Exception("Can only convert to/from USD")
         invert = _from == "USD"
         curr = _to if invert else _from
-        
+
         div100 = 1
         if curr == "GBC":
             div100 = 100
             curr = "GBP"
-        
+
         if curr in self.fred_code_map:
             code = self.fred_code_map[curr]
             df = quandl.get("FRED/" + code)
@@ -184,10 +184,10 @@ class ForexDataSource(DataSource):
             return df / div100
 
         raise Exception("Currency pair is not supported: " + symbol.name)
-        
+
     def process(self, symbol, df, conf):
         return df.iloc[:, 0]
-      
+
 # https://github.com/ranaroussi/fix-yahoo-finance
 class YahooDataSource(DataSource):
     def fetch(self, symbol, conf):
@@ -202,14 +202,14 @@ class YahooDataSource(DataSource):
             assert conf.splitAdj and conf.divAdj
             return df["Adj Close"]
         elif conf.mode == "PR":
-            # Yahoo "Close" data is split adjusted. 
+            # Yahoo "Close" data is split adjusted.
             if conf.splitAdj:
                 return df["Close"]
             else:
                 return self.adjustSplits(df["Close"], df["Stock Splits"])
             # We find the unadjusted data using the splits data
             # splitMul = df["Stock Splits"][::-1].cumprod().shift().fillna(method="bfill")
-            # return df["Close"] / splitMul        
+            # return df["Close"] / splitMul
         elif conf.mode == "divs":
             # Yahoo divs are NOT split adjusted, or are they?
             # if conf.splitAdj:
@@ -242,20 +242,20 @@ class QuandlDataSource(DataSource):
         else:
             raise Exception("Unsupported mode [" + conf.mode + "] for QuandlDataSource")
 
-    
+
 class GoogleDataSource(DataSource):
     def fetch(self, symbol, conf):
         return pandas_datareader.data.DataReader(symbol.name, 'google')
 
     def process(self, symbol, df, conf):
         return df["Close"]
-    
+
 from ratelimiter import RateLimiter
 def limited(until):
     duration = int(round(until - time.time()))
     print('Rate limited, sleeping for {:d} seconds'.format(duration))
-    
-    
+
+
 AV_API_KEY = 'BB18'
 #AV_API_KEYS = ['BB18']
 AV_API_KEYS = ['HBTU90Z2A5LZG7T1', 'SC2LFF11DAEBY5XY', 'PMZO6PMXLZ0RTDRA', 'LYSN4091GT6HW4WP']
@@ -265,13 +265,13 @@ class AlphaVantageDataSource(DataSource):
         super(AlphaVantageDataSource, self).__init__(source)
         self.key_i = 0
         self.ratelimiter = RateLimiter(max_calls=4, period=60, callback=limited)
-    
+
     def adjustSplits(self, price, splits):
         r = splits[::-1].cumprod().shift().fillna(method="bfill")
 #        r = splits.cumprod()
         return price / r
-    
-    # AV sometimes have duplicate split multiplers, we only use the last one 
+
+    # AV sometimes have duplicate split multiplers, we only use the last one
     def fixAVSplits(self, df):
         df = df.sort_index()
         split = df["8. split coefficient"]
@@ -314,7 +314,7 @@ class AlphaVantageDataSource(DataSource):
             #return df["7. dividend amount"]
         else:
             raise Exception("Unsupported mode [" + conf.mode + "] for AlphaVantageDataSource")
-        
+
 class AlphaVantageCryptoDataSource(DataSource):
 
     def fetch(self, symbol, conf):
@@ -340,7 +340,7 @@ class CryptoCompareDataSource(DataSource):
     def process(self, symbol, df, conf):
         return df.close
 
-# NOTE: data is SPLIT adjusted, but has no dividends and is NOT DIVIDEND adjusted 
+# NOTE: data is SPLIT adjusted, but has no dividends and is NOT DIVIDEND adjusted
 # NOTE: it has data all the way to the start, but returned result is capped in length for ~20 years
 #       and results are trimmed from the END, not from the start. TBD to handle this properly.
 #       for now we start at 1.1.2000
@@ -350,7 +350,7 @@ class InvestingComDataSource(DataSource):
         symbol = symbol.name
         data = {
             'search_text': symbol,
-            'term': symbol, 
+            'term': symbol,
             'country_id': '0',
             'tab_id': 'All'
         }
@@ -363,16 +363,16 @@ class InvestingComDataSource(DataSource):
                     'Accept': 'application/json, text/javascript, */*; q=0.01',
                     'Referer': 'https://www.investing.com/search?q=' + symbol,
                     'X-Requested-With': 'XMLHttpRequest',
-                    'Connection': 'keep-alive'    
+                    'Connection': 'keep-alive'
                 }
         r = requests.post("https://www.investing.com/search/service/search", data=data, headers=headers)
         res = r.text
         res = json.loads(res)
         return res["All"][0]["link"]
-    
+
     def getCodes(self, url):
         url = "https://www.investing.com" + url + "-historical-data"
-        
+
         headers = {
                     'Origin': 'https://www.investing.com',
                     'Accept-Encoding': 'gzip, deflate, br',
@@ -382,19 +382,19 @@ class InvestingComDataSource(DataSource):
                     'Accept': 'application/json, text/javascript, */*; q=0.01',
                     'Referer': 'https://www.investing.com/',
                     'X-Requested-With': 'XMLHttpRequest',
-                    'Connection': 'keep-alive'    
+                    'Connection': 'keep-alive'
                 }
         r = requests.get(url,headers=headers)
         text = r.text
-        
+
         m = re.search("smlId:\s+(\d+)", text)
         smlId = m.group(1)
-        
+
         m = re.search("pairId:\s+(\d+)", text)
         pairId = m.group(1)
-        
+
         return pairId, smlId
-    
+
     def getHtml(self, pairId, smlId):
         data = [
             'curr_id=' + pairId,
@@ -404,7 +404,7 @@ class InvestingComDataSource(DataSource):
             'end_date=01%2F01%2F2100',
             'interval_sec=Daily',
             'sort_col=date',
-            'sort_ord=DESC', 
+            'sort_ord=DESC',
             'action=historical_data'
         ]
         data = "&".join(data)
@@ -417,21 +417,21 @@ class InvestingComDataSource(DataSource):
             'Accept': 'text/plain, */*; q=0.01',
             'Referer': 'https://www.investing.com/',
             'X-Requested-With': 'XMLHttpRequest',
-            'Connection': 'keep-alive'    
+            'Connection': 'keep-alive'
         }
         r = requests.post("https://www.investing.com/instruments/HistoricalDataAjax", data=data, headers=headers)
         return r.text
-    
+
     def fetch(self, symbol, conf):
         symbolUrl = self.getUrl(symbol)
-        
+
         pairId, smlId = self.getCodes(symbolUrl)
-        
+
         html = self.getHtml(pairId, smlId)
         #print(html)
         parsed_html = BeautifulSoup(html, "lxml")
         df = pd.DataFrame(columns=["date", "price"])
-        
+
         for i, tr in enumerate(parsed_html.find_all("tr")[1:]): # skip header
             data = [x.get("data-real-value") for x in tr.find_all("td")]
             if len(data) == 0 or data[0] is None:
@@ -443,14 +443,14 @@ class InvestingComDataSource(DataSource):
             #low = data[4]
             #volume = data[5]
             df.loc[i] = [date, close]
-            
+
         df = df.set_index("date")
         return df
 
     def process(self, symbol, df, conf):
         return df['price']
 
-import time    
+import time
 class JustEtfDataSource(DataSource):
 
 
@@ -505,40 +505,40 @@ class JustEtfDataSource(DataSource):
         symbolName = symbol.name
         data = {
             'draw': '1',
-            'start': '0', 
-            'length': '25', 
-            'search[regex]': 'false', 
-            'lang': 'en', 
-            'country': 'GB', 
-            'universeType': 'private', 
-            'etfsParams': 'query=' + symbolName, 
-            'groupField': 'index', 
+            'start': '0',
+            'length': '25',
+            'search[regex]': 'false',
+            'lang': 'en',
+            'country': 'GB',
+            'universeType': 'private',
+            'etfsParams': 'query=' + symbolName,
+            'groupField': 'index',
         }
         headers = {
                     'Accept-Encoding': 'gzip, deflate, br',
                 }
         session = requests.Session()
-        
-        
+
+
         r = session.get("https://www.justetf.com/en/etf-profile.html?tab=chart&isin=IE00B5L65R35", headers=headers)
-        
+
         r = session.post("https://www.justetf.com/servlet/etfs-table", data=data, headers=headers)
         res = r.text
-        
+
         res = json.loads(res)
         for d in res["data"]:
             if d["ticker"] == symbolName:
                 return (d["isin"], session)
         raise Exception("Symbol not found in source: " + str(symbol))
-    
+
     def getData(self, isin, session, conf, raw=False):
         if not session:
             session = requests.Session()
-            
+
         headers = {
                     'Accept-Encoding': 'gzip, deflate, br',
                 }
-        
+
         url3 = "https://www.justetf.com/uk/etf-profile.html?groupField=index&from=search&isin=" + isin + "&tab=chart"
         r = session.get(url3, headers=headers)
 
@@ -562,43 +562,43 @@ class JustEtfDataSource(DataSource):
             r = session.post(url, headers=headers)
             text = r.text
             headers["wicket-focusedelementid"] = "id1b"
-        
+
         url = "https://www.justetf.com/en/?wicket:interface=:0:tabs:panel:chart:dates:ptl_3y::IBehaviorListener:0:1&random=0.2525050377785838"
         r = session.get(url, headers=headers)
         text = r.text
 
-        
+
         # PRICE (instead of percent change)
         data = { 'tabs:panel:chart:optionsPanel:selectContainer:valueType': 'market_value' }
         url = "https://www.justetf.com/en/?wicket:interface=:0:tabs:panel:chart:optionsPanel:selectContainer:valueType::IBehaviorListener:0:1&random=0.7560635418741075"
         r = session.post(url, headers=headers, data=data)
         text = r.text
-        
+
         # CURRENCY
         #data = { 'tabs:panel:chart:optionsPanel:selectContainer:currencies': '3' }
         #url = "https://www.justetf.com/en/?wicket:interface=:0:tabs:panel:chart:optionsPanel:selectContainer:currencies::IBehaviorListener:0:1&random=0.8898086171718949"
         #r = session.post(url, headers=headers, data=data)
         #text = r.text
-        
-        
-        
+
+
+
         url = "https://www.justetf.com/en/?wicket:interface=:0:tabs:panel:chart:dates:ptl_max::IBehaviorListener:0:1&random=0.2525050377785838"
         #url = "https://www.justetf.com/uk/?wicket:interface=:3:tabs:panel:chart:dates:ptl_max::IBehaviorListener:0:1"
-        
+
         #plain_cookie = 'locale_=en_GB; universeCountry_=GB; universeDisclaimerAccepted_=false; JSESSIONID=5C4770C8CE62E823C17E292486D04112.production01; AWSALB=Wy2YQ+nfXWR+lTtsGly/hBDFD5pCCtYo/VxE0lIXBPlA/SdQDbRxhg+0q2E8UybYawqQiy3/1m2Bs4xvN8yFW3cs/2zy8385MuhGGCN/FUwnstSvbL7T8rfcV03k'
         #cj = requests.utils.cookiejar_from_dict(dict(p.split('=') for p in plain_cookie.split('; ')))
         #session.cookies = cj
-        
+
         r = session.get(url, headers=headers)
         text = r.text
         #print(text)
         if raw:
             return text
-        
+
         return self.parseRawText(text)
-        
-        
-    
+
+
+
     def fetch(self, symbol, conf):
         return self.getData(symbol.name, None, conf)
 
@@ -611,9 +611,9 @@ class JustEtfDataSource(DataSource):
             return df["divs"]
         else:
             raise Exception("Unsupported mode [" + conf.mode + "] for JustEtfDataSource")
-        
+
         return df['price']
-    
+
 #x = JustEtfDataSource("XXX")
 #isin, session = x.getIsin(Symbol("ERNS"))
 #t = x.getData(isin, session)
@@ -633,7 +633,7 @@ class BloombergDataSource(DataSource):
                     'Accept': 'application/json, text/javascript, */*; q=0.01',
                     'Referer': 'https://www.bloomberg.com',
                     'X-Requested-With': 'XMLHttpRequest',
-                    'Connection': 'keep-alive'    
+                    'Connection': 'keep-alive'
                 }
         url = "https://www.bloomberg.com/markets/api/bulk-time-series/price/__sym__?timeFrame=5_YEAR"
         sym = symbol.name.replace(";", ":")
@@ -661,7 +661,7 @@ class BloombergDataSource(DataSource):
         else:
             raise Exception("Unsupported mode [" + conf.mode + "] for AlphaVantageDataSource")
 
-    
+
 # source: https://info.tase.co.il/Heb/General/ETF/Pages/ETFGraph.aspx?companyID=001523&subDataType=0&shareID=01116441
 # graphs -> "export data" menu
 # source: https://www.tase.co.il/he/market_data/index/142/graph
@@ -683,7 +683,7 @@ class TASEDataSource(DataSource):
                 typ = "krn"
             else:
                 raise Exception("unsupported prefix: " + sym)
-                
+
             headers = {
                 'Origin': 'https://info.tase.co.il',
                 'Accept-Encoding': 'gzip, deflate, br',
@@ -693,12 +693,12 @@ class TASEDataSource(DataSource):
                 'Accept': 'text/plain, */*; q=0.01',
                 'Referer': 'https://info.tase.co.il/',
                 'X-Requested-With': 'XMLHttpRequest',
-                'Connection': 'keep-alive'    
-            }                
+                'Connection': 'keep-alive'
+            }
         else:
             url = "https://api.tase.co.il/api/ChartData/ChartData/?ct=1&ot=2&lang=1&cf=0&cp=8&cv=0&cl=0&cgt=1&dFrom=__from__&dTo=__to__&oid=__sym__"
             typ = "idx"
-            
+
             headers = {
                     'Origin': 'https://api.tase.co.il',
                     'Accept-Encoding': 'gzip, deflate, br',
@@ -708,17 +708,17 @@ class TASEDataSource(DataSource):
                     'Accept': 'text/plain, */*; q=0.01',
                     'Referer': 'https://api.tase.co.il/',
                     'X-Requested-With': 'XMLHttpRequest',
-                    'Connection': 'keep-alive'    
-                }            
-            
+                    'Connection': 'keep-alive'
+                }
+
         url = url.replace("__from__", "01/01/2000")
         today = datetime.date.today().strftime("%d/%m/%Y")
         url = url.replace("__to__", today)
         url = url.replace("__sym__", sym)
 
-        r = requests.get(url, headers=headers)        
+        r = requests.get(url, headers=headers)
         text = r.text
-        
+
         if typ == "idx":
             js = json.loads(text)
             df = pd.read_json(json.dumps(js["PointsForHistoryChart"]))
@@ -752,7 +752,7 @@ class FundFlowDataSource(DataSource):
     def fetch(self, symbol, conf):
         url = "https://www.etf.com/etf-chart/ajax/fundflows/__sym__/1993-01-01/2020-10-11/__sym__%20Daily%20Fund%20Flows/Net%20Flows/%24USD%2Cmm/yes"
         url = url.replace("__sym__", symbol.ticker)
-            
+
         headers = {
             'Origin': 'https://www.etf.com',
             'Accept-Encoding': 'gzip, deflate, br',
@@ -763,9 +763,9 @@ class FundFlowDataSource(DataSource):
             'Referer': 'https://www.etf.com/etfanalytics/etf-fund-flows-tool',
             'Authority': 'www.etf.com',
             'X-Requested-With': 'XMLHttpRequest',
-            'Connection': 'keep-alive'    
-        }                
-        r = requests.get(url, headers=headers)        
+            'Connection': 'keep-alive'
+        }
+        r = requests.get(url, headers=headers)
         text = r.text
         js = json.loads(text)
         data = js[1]['output']
