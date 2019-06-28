@@ -30,7 +30,10 @@ def cache_get(symbol, source):
       ).get("Body").read().decode('utf-8'))
     except ClientError as error:
       if error.response["Error"]["Code"] == "NoSuchKey":
-          print("File % not found", file_path)
+          print("File %s not found" % file_path)
+          return None
+    except Exception as e:
+          print("An error occurred while getting %s file: %s" % (file_path, e))
           return None
 
     if symbol_body:
@@ -42,8 +45,12 @@ def cache_get(symbol, source):
 
 def cache_set(symbol, source, s):
     file_path = cache_file(symbol, source)
-    s3_client.put_object(
-      Bucket=BUCKET_NAME,
-      Key=file_path,
-      Body=s.to_csv(date_format="%Y-%m-%d", index_label="date")
-    )
+
+    try:
+      s3_client.put_object(
+        Bucket=BUCKET_NAME,
+        Key=file_path,
+        Body=s.to_csv(date_format="%Y-%m-%d", index_label="date")
+      )
+    except Exception as e:
+      print("Failed to write %s to S3 cache. Reason: %s" % (file_path, e))

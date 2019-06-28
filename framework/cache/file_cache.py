@@ -7,8 +7,8 @@ def format_filename(s):
     filename = ''.join(c if c in valid_chars else '_' for c in s )
     filename = filename.replace(' ','_')
     return filename
-    
- 
+
+
 def get_symbols_path():
     if os.path.isfile('Retropy_framework.py'):
         base = ''
@@ -18,7 +18,7 @@ def get_symbols_path():
         base = '../../'
     else:
         raise Exception('base path not found')
-    
+
     return os.path.join(base, "symbols")
 
 def cache_file(symbol, source):
@@ -34,10 +34,10 @@ def cache_clear():
     if not os.path.exists(dirpath):
         print(f"path not found: {dirpath}")
     import shutil
-    shutil.rmtree(dirpath)        
+    shutil.rmtree(dirpath)
     symbols_mem_cache = {}
     print("cache cleared")
-    
+
 def cache_get(symbol, source):
     filepath = cache_file(symbol, source)
     # if os.path.exists(filepath + '.gz'):
