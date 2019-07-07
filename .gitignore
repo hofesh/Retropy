@@ -6,6 +6,5 @@ private
 pyfinance/__pycache__
 framework/__pycache__
 __pycache__
-symbols/**/*._FAIL_
-
+symbols/
 *venv/
