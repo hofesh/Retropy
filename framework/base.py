@@ -20,6 +20,37 @@ from framework.data_sources import *
 
 
 
+def getForex(fromCur, toCur, inv=False, cache=True):
+    if fromCur == toCur: return 1
+
+    div100 = 1
+    if fromCur == "GBC":
+        div100 = 100
+        fromCur = "GBP"
+
+    if inv:
+        tmp = 1/getForex(toCur, fromCur, inv=False, cache=cache)
+        tmp.name = fromCur + "/" + toCur + "@IC"
+        return tmp / div100
+    tmp = get(fromCur + "/" + toCur + "@IC", cache=cache)
+    tmp = tmp.reindex(pd.date_range(start=tmp.index[0], end=tmp.index[-1]))
+    tmp = tmp.fillna(method="ffill")
+    return tmp / div100
+
+def convertSeries(s, fromCur, toCur, inv=False, cache=True):
+    if fromCur == toCur: return s
+    rate = getForex(fromCur, toCur, inv=inv, cache=cache)
+    s = get(s)
+    nm = s.name
+    s = (s*rate).dropna()
+    s.name = nm
+    return name(s, s.name + " " + toCur)
+    
+def convertToday(value, fromCur, toCur):
+    if fromCur == toCur: return value
+    return value * getForex(fromCur, toCur)[-1]
+
+
 def s_start(s):
     if s.shape[0] > 0:
         return s.index[0]

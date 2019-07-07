@@ -137,7 +137,7 @@ def trimBy(trimmed, by):
     if len(by) == 0:
         return []
     start = max(s.index[0] for s in by)
-    res = [s[start:] for s in get(trimmed)]
+    res = [s[start:] for s in framework.base.get(trimmed)]
     if not_list:
         return res[0]
     return res
