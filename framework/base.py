@@ -213,7 +213,7 @@ def getFrom(symbol, conf, error):
     except Exception as e:
         # if the source wasn't explicitly stated, try from secondary
         if not symbol.source and not conf.source:
-            print(f"Failed to fetch {symbol} from {source}, trying from {conf.secondary} .. ", end="")
+            print_norep(f"Failed to fetch {symbol} from {source}, trying from {conf.secondary} .. ", end="")
             try:
                 res = data_sources[conf.secondary].get(symbol, conf)
             except Exception as e:
@@ -598,6 +598,8 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
         if s is None: # can happen in error=='ignore'
             return None
 
+        s = s.loc[~s.index.duplicated(keep='first')] # will fail if we have duplicate index
+
         s.name = symbol
         if drop_zero:
             if np.any(s != 0):
@@ -608,7 +610,13 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
                 s = globals()["despike"](s)
 
             if interpolate and s.shape[0] > 0:
-                s = do_interpolate(s)
+                try: 
+                    s = do_interpolate(s)
+                except Exception as e:
+                    if error == 'ignore':
+                        pass
+                    else:
+                        raise Exception(f"error during interpolation: {e}")
                 # s = s.reindex(pd.date_range(start=s.index[0], end=s.index[-1]))
                 # s = s.interpolate()
 

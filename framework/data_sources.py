@@ -23,7 +23,7 @@ import quandl
 quandl.ApiConfig.api_key = "9nrUn7Sm1SdoeLdQGQB-"
 
 from framework.utils import *
-from framework.cache import *
+from framework.cache.file_cache import *
 import framework.conf as gconf
 import framework.mem as gmem
 
