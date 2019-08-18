@@ -195,12 +195,13 @@ class YahooDataSource(DataSource):
         return pdr.get_data_yahoo(symbol.name, progress=False, actions=True)
 
     def adjustSplits(self, price, splits):
+        splits[splits==0] = 1
         r = splits[::-1].cumprod().shift().fillna(method="bfill")
         return price / r
 
     def process(self, symbol, df, conf):
         if conf.mode == "TR":
-            assert conf.splitAdj and conf.divAdj
+            assert conf.splitAdj and conf.divAdj, "Yahoo data source TR mode expects splitAdj and divAdj"
             return df["Adj Close"]
         elif conf.mode == "PR":
             # Yahoo "Close" data is split adjusted.
@@ -317,7 +318,6 @@ class AlphaVantageDataSource(DataSource):
             raise Exception("Unsupported mode [" + conf.mode + "] for AlphaVantageDataSource")
 
 class AlphaVantageCryptoDataSource(DataSource):
-
     def fetch(self, symbol, conf):
         cc = CryptoCurrencies(key=AV_API_KEY, output_format='pandas')
         df, meta_data = cc.get_digital_currency_daily(symbol=symbol.name, market='USD')
@@ -327,9 +327,11 @@ class AlphaVantageCryptoDataSource(DataSource):
     def process(self, symbol, df, conf):
         return df['4a. close (USD)']
 
+# we are limited to 2000 days at a time
+# make multiple queries if we must
 class CryptoCompareDataSource(DataSource):
     def fetch(self, symbol, conf):
-        url = "https://min-api.cryptocompare.com/data/histoday?fsym=__sym__&tsym=USD&limit=600000&aggregate=1&e=CCCAGG"
+        url = "https://min-api.cryptocompare.com/data/histoday?fsym=__sym__&tsym=USD&limit=2000&aggregate=1&e=CCCAGG&apikey=ea8ae46035f2c409808781d83316bd24b78f5fa1535ce1ce5adad8f83f316029"
         d = json.loads(requests.get(url.replace("__sym__", symbol.name)).text)
         df = pd.DataFrame(d["Data"])
         if len(df) == 0:
@@ -397,12 +399,15 @@ class InvestingComDataSource(DataSource):
         return pairId, smlId
 
     def getHtml(self, pairId, smlId):
+        # NOTE!!!
+        # Investing.com can only return a limited amount of data (roughly 18 years)
+        # so we can't ask the data from too early a period if we want to get the up to the latest date
         data = [
             'curr_id=' + pairId,
             'smlID=' + smlId,
             'header=',
-            'st_date=01%2F01%2F2000',
-            'end_date=01%2F01%2F2100',
+            'st_date=01/01/2001',
+            'end_date=07/01/2100',
             'interval_sec=Daily',
             'sort_col=date',
             'sort_ord=DESC',
@@ -747,7 +752,7 @@ class TASEDataSource(DataSource):
         return df
 
     def process(self, symbol, df, conf):
-        return df["price"]
+        return df["price"] / 100  # data is in agorot
 
 class FundFlowDataSource(DataSource):
     def fetch(self, symbol, conf):
@@ -821,6 +826,15 @@ Date	Value
 31-Jul-2018	$1,452.3415
 31-Aug-2018	$1,418.2482
 30-Sep-2018	$1,415.6050
+31-Oct-2018	$1,247.8186
+30-Nov-2018	$1,284.2957
+31-Dec-2018	$1,140.6900
+31-Jan-2019	$1,283.7005
+28-Feb-2019	$1,267.8663
+31-Mar-2019	$1,275.3483
+30-Apr-2019	$1,342.5116
+31-May-2019	$1,300.9831
+30-Jun-2019	$1,343.8041
 """
         df = pd.read_csv(StringIO(EDEN), sep="\t", thousands=",", index_col="Date", parse_dates=True, dayfirst=True)
         return df
@@ -828,7 +842,22 @@ Date	Value
     def process(self, symbol, df, conf):
         return series_as_float(df["Value"])#.str.replace("$", "").str.replace(",", "").astype("float")
 
+class FREDDataSource(DataSource):
+    def fetch(self, symbol, conf):
+        url = 'https://fred.stlouisfed.org/graph/fredgraph.csv?bgcolor=%23e1e9f0&chart_type=line&drp=0&fo=open%20sans&graph_bgcolor=%23ffffff&height=450&mode=fred&recession_bars=on&txtcolor=%23444444&ts=12&tts=12&width=1168&nt=0&thu=0&trc=0&show_legend=yes&show_axis_titles=yes&show_tooltip=yes&id=__sym__&scale=left&cosd=1970-12-31&coed=2019-08-15&line_color=%234572a7&link_values=false&line_style=solid&mark_type=none&mw=3&lw=2&ost=-99999&oet=99999&mma=0&fml=a&fq=Daily%2C%20Close&fam=avg&fgst=lin&fgsnd=2009-06-01&line_index=1&transformation=lin&vintage_date=2019-08-18&revision_date=2019-08-18&nd=1970-12-31'
+        url = url.replace("__sym__", symbol.ticker)
+        df = pd.read_csv(url)
+        df["DATE"] = pd.to_datetime(df["DATE"])
+        df = df.set_index("DATE")
+        df.iloc[:, 0] = df.iloc[:, 0].replace('.', np.nan, regex=False)
+        
+        return df
+
+    def process(self, symbol, df, conf):
+        return df.iloc[:, 0].astype(float)
+
 data_sources = {
+    "FRED": EdenDataSource("FRED"),
     "EDEN": EdenDataSource("EDEN"),
     "TASE": TASEDataSource("TASE"),
     "B": BloombergDataSource("B"),
