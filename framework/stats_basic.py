@@ -52,6 +52,10 @@ def cagr(s):
     if np.any(s <= 0):
         warn(f"{get_name(s)} has non-positive values, can't calc cagr()")
         return np.nan
+    s = s.dropna()
+    if len(s) == 0:
+        warn(f"{get_name(s)} is empty")
+        return np.nan
     days = (s.index[-1] - s.index[0]).days
     if days <= 0:
         return np.nan

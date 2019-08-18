@@ -49,3 +49,26 @@ def get_usd_corr(s):
     
 def get_usd_pvalue(s):
     return corr(logret(eow(s)), logret(eow(get(ac.usdBroad))), p_value=True)[1]
+
+def get_future_return(s, days):
+    x = mcagr(s, days).dropna()
+    x = x.reindex(pd.date_range(x.index[0]-days, x.index[-1]))
+    fret = x.shift(-days).dropna()
+    return fret
+
+def get_future_return_monthly(s, years):
+    s = s.asfreq("MS") # TODO: this depends on the series month freq M or MS, mjust be set if not defined
+    months = 12*years
+    x = mcagr_monthly(s, years).dropna()
+#     x = x.reindex(pd.date_range(x.index[0]-months, x.index[-1]))
+    fret = x.shift(-months).dropna()
+    return fret
+
+def extrapolate_to_today(s, n_last):
+    s_ret = ret(s)
+    rate = s_ret[:-n_last].mean()
+    s_ret = s_ret.reindex(pd.date_range(s_ret.index[0], pd.datetime.today()))
+    s_ret = s_ret.fillna(rate)
+    s_ret.iloc[0] = np.nan
+    s = i_ret(s_ret) * s.iloc[0]
+    return s

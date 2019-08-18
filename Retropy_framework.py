@@ -499,7 +499,7 @@ def do_sort(data):
     sers = sorted(sers, key=lambda x: x.index[0])
     return sers + non_sers
 
-def show(*data, trim=True, trim_end=True, align=True, align_base=None, ta=True, cache=None, mode=None, source=None, remode=None, untrim=None, silent=False, sort=True, drop_corrupt=False, **plotArgs):
+def show(*data, trim=True, trim_end=False, align=True, align_base=None, ta=True, cache=None, mode=None, source=None, remode=None, untrim=None, silent=False, sort=True, drop_corrupt=False, **plotArgs):
     getArgs = {}
     if not mode is None:
         getArgs["mode"] = mode
@@ -811,9 +811,9 @@ def show_rr_modes_mutual_dd_risk_rolling_SPY(*all):
     title = f"modes CAGR vs PR mutual_dd_risk_rolling_SPY"
     show_rr_modes(*all, risk_func=mutual_dd_rolling_SPY)
 
-def show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all):
+def show_rr__cagr__mutual_dd_risk_rolling_pr_SPY(*all, lr_fit=False):
     title = f"{all[0].name.mode} CAGR vs PR mutual_dd_risk_rolling_SPY"
-    show_rr(*all, risk_func=mutual_dd_rolling_pr_SPY, title=title)
+    show_rr(*all, risk_func=mutual_dd_rolling_pr_SPY, title=title, lr_fit=lr_fit)
 
 def show_rr__yield__mutual_dd_risk_rolling_pr_SPY(*all, yield_func=None):
     yield_func = yield_func or get_curr_yield_min2

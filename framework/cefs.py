@@ -44,6 +44,8 @@ specialty_utilities = df.query('sec_sub == "Utilities Funds" and sec_main == "Sp
 national_muni_bond_funds = df.query('sec_main == "National Muni Bond Funds"').index.tolist()
 taxable_muni_bond_funds = df.query('sec_sub == "Taxable Municipal Bond Funds"').index.tolist()
 
+loan_participation_funds = df.query('sec_sub == "Loan Participation"').index.tolist()
+
 fixed_income = taxable_bond_funds + specialty_prefered + specialty_real_estate + taxable_muni_bond_funds
 
 all =  df.index.tolist()
@@ -93,7 +95,7 @@ def get_cef_nav(s, source=None):
         return None
     if is_series(s) and source is None:
         source = s.name.source
-    source = source or "AV"
+    source = source or "Y"
     return get(get_cef_nav_ticker(s), source=source, mode="PR", error='ignore', cache_fails=True)
 
 def get_cef_premium(s, source="AV"):
