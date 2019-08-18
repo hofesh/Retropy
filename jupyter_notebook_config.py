@@ -15,17 +15,17 @@
 ## Set the log level by value or name.
 #c.Application.log_level = 30
 
-import os
-from subprocess import check_call
+# import os
+# from subprocess import check_call
 
-def post_save(model, os_path, contents_manager):
-    """post-save hook for stripping output"""
-    if model['type'] != 'notebook':
-        return # only do this for notebooks
-    d, fname = os.path.split(os_path)
-    check_call(['jupyter', 'nbconvert', '--ClearOutputPreprocessor.enabled=True', '--inplace', fname], cwd=d)
+# def post_save(model, os_path, contents_manager):
+#     """post-save hook for stripping output"""
+#     if model['type'] != 'notebook':
+#         return # only do this for notebooks
+#     d, fname = os.path.split(os_path)
+#     check_call(['jupyter', 'nbconvert', '--ClearOutputPreprocessor.enabled=True', '--inplace', fname], cwd=d)
 
-c.FileContentsManager.post_save_hook = post_save
+# c.FileContentsManager.post_save_hook = post_save
 
 #------------------------------------------------------------------------------
 # JupyterApp(Application) configuration
