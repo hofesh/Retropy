@@ -20,6 +20,7 @@ from framework.data_sources import *
 
 
 
+
 def getForex(fromCur, toCur, inv=False, cache=True):
     if fromCur == toCur: return 1
 
@@ -30,12 +31,29 @@ def getForex(fromCur, toCur, inv=False, cache=True):
 
     if inv:
         tmp = 1/getForex(toCur, fromCur, inv=False, cache=cache)
-        tmp.name = fromCur + "/" + toCur + "@IC"
+        tmp.name = fromCur + toCur + "@CUR"
         return tmp / div100
-    tmp = get(fromCur + "/" + toCur + "@IC", cache=cache)
+    tmp = get(fromCur + toCur + "@CUR", cache=cache)
     tmp = tmp.reindex(pd.date_range(start=tmp.index[0], end=tmp.index[-1]))
     tmp = tmp.fillna(method="ffill")
     return tmp / div100
+
+# def getForex(fromCur, toCur, inv=False, cache=True):
+#     if fromCur == toCur: return 1
+
+#     div100 = 1
+#     if fromCur == "GBC":
+#         div100 = 100
+#         fromCur = "GBP"
+
+#     if inv:
+#         tmp = 1/getForex(toCur, fromCur, inv=False, cache=cache)
+#         tmp.name = fromCur + "/" + toCur + "@IC"
+#         return tmp / div100
+#     tmp = get(fromCur + "/" + toCur + "@IC", cache=cache)
+#     tmp = tmp.reindex(pd.date_range(start=tmp.index[0], end=tmp.index[-1]))
+#     tmp = tmp.fillna(method="ffill")
+#     return tmp / div100
 
 def convertSeries(s, fromCur, toCur, inv=False, cache=True):
     if fromCur == toCur: return s
@@ -106,7 +124,7 @@ def doAlign(data):
     return newArr
 
 
-def doTrim(data, silent=False, trim=True, trim_end=True):
+def doTrim(data, silent=False, trim=True, trim_end=False):
     data = _doTrim(data, 'start', silent=silent, trim=trim)
     if trim_end:
         data = _doTrim(data, 'end', silent=silent, trim=not trim is False)
@@ -402,7 +420,7 @@ def get_intr(s, getArgs, alt_price_symbol=None):
 def is_not_corrupt(s):
     if not is_series(s):
         return True
-    if " flow" in s.name:
+    if isinstance(s.name, str) and " flow" in s.name:
         return True
     if len(s) > 0 and (s.index[-1] - s.index[0]).days/365 > 50:
         return True
@@ -572,6 +590,7 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
             raise Exception("attemping to get an empty string as symbol name")
         
         if global_conf.ignoredAssets and symbol in global_conf.ignoredAssets:
+            warn(f"Ignoring get() for symbol {symbol}")
             return wrap(pd.Series(), "<empty>")
 
         # special handing for composite portfolios
@@ -601,7 +620,7 @@ def get(symbol, source=None, cache=True, cache_fails=False, splitAdj=True, divAd
         s = s.loc[~s.index.duplicated(keep='first')] # will fail if we have duplicate index
 
         s.name = symbol
-        if drop_zero:
+        if drop_zero and mode!="raw":
             if np.any(s != 0):
                 s = s[s != 0] # clean up broken yahoo data, etc ..
 
